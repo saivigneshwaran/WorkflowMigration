@@ -1,6 +1,6 @@
 ---
 name: uipath-workflow-migrator
-description: UiPath Workflow Migrator workflow for bundled UiPath.Upgrade.Cli based Studio project migration. Use when Codex needs to analyze or migrate UiPath project.json/.xaml projects from Windows-Legacy/Legacy to Windows, convert supported Classic activities to Modern activities, run Workflow Migrator/UiPath.Upgrade.exe analyze or upgrade commands, generate migration analysis reports, obtain explicit user consent before migration, configure migration extensions, inspect SARIF/HTML reports, use captured migration operations knowledge, reduce status polling, automatically attempt post-migration remediation, or assess/implement Windows to Cross-platform/Portable migration support.
+description: UiPath Workflow Migrator for bundled UiPath.Upgrade.Cli Studio project migration. Use when an agent needs to analyze or migrate UiPath project.json/.xaml projects from Windows-Legacy/Legacy to Windows, convert supported Classic activities to Modern activities, run Workflow Migrator/UiPath.Upgrade.exe analyze or upgrade commands, generate migration reports, obtain explicit user consent before migration, configure migration extensions, inspect SARIF/HTML reports, use captured migration operations knowledge, reduce status polling, attempt post-migration remediation, or assess Windows to Cross-platform/Portable migration support.
 ---
 
 # UiPath Workflow Migrator
@@ -31,13 +31,19 @@ If the user explicitly provides a new migration knowledge source and asks to ref
 
 ## Portable Setup
 
-When invoking the bundled helper, derive the skill path from `CODEX_HOME` instead of hard-coding a user directory:
+When invoking the bundled helper, set `SKILL_DIR` to the folder that contains this `SKILL.md`. In a repository checkout, use:
+
+```bash
+SKILL_DIR="$PWD/uipath-workflow-migrator"
+```
+
+If the skill is installed into a Codex skills directory, use:
 
 ```bash
 SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/uipath-workflow-migrator"
 ```
 
-If the skill is checked out somewhere else, set `SKILL_DIR` to that checkout path.
+If another coding agent installs the skill into its own skill/plugin directory, set `SKILL_DIR` to that installed skill folder. Do not hard-code user-specific paths.
 
 The Workflow Migrator CLI must be shipped with the skill under:
 

@@ -1,0 +1,23 @@
+{
+  "name": "uipath-workflow-migrator",
+  "version": "0.1.0",
+  "description": "UiPath Workflow Migrator plugin for coding agents: a self-contained skill and bundled Upgrade CLI for approval-gated Studio project migration.",
+  "author": {
+    "name": "saivigneshwaran"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/saivigneshwaran/WorkflowMigration",
+  "repository": "https://github.com/saivigneshwaran/WorkflowMigration",
+  "keywords": [
+    "uipath",
+    "workflow",
+    "migration",
+    "rpa",
+    "xaml",
+    "studio",
+    "upgrade",
+    "windows-legacy",
+    "classic-activities"
+  ],
+  "skills": "./skills/"
+}

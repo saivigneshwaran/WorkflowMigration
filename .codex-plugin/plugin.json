@@ -1,0 +1,43 @@
+{
+  "name": "uipath-workflow-migrator",
+  "version": "0.1.0",
+  "description": "UiPath Workflow Migrator skill for approval-gated Studio project migration with the bundled UiPath Upgrade CLI.",
+  "author": {
+    "name": "saivigneshwaran"
+  },
+  "homepage": "https://github.com/saivigneshwaran/WorkflowMigration",
+  "repository": "https://github.com/saivigneshwaran/WorkflowMigration",
+  "license": "MIT",
+  "keywords": [
+    "uipath",
+    "workflow",
+    "migration",
+    "rpa",
+    "xaml",
+    "studio",
+    "upgrade",
+    "windows-legacy",
+    "classic-activities"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "UiPath Workflow Migrator",
+    "shortDescription": "Analyze, migrate, and remediate UiPath projects",
+    "longDescription": "Use UiPath Workflow Migrator to analyze legacy Studio projects, generate approval-gated migration reports, run the bundled Upgrade CLI, and remediate migrated output.",
+    "developerName": "saivigneshwaran",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/saivigneshwaran/WorkflowMigration",
+    "privacyPolicyURL": "https://github.com/saivigneshwaran/WorkflowMigration",
+    "termsOfServiceURL": "https://github.com/saivigneshwaran/WorkflowMigration",
+    "defaultPrompt": [
+      "Analyze this UiPath project and prepare a migration report.",
+      "Migrate this approved UiPath project with Workflow Migrator."
+    ],
+    "brandColor": "#FA4616"
+  }
+}

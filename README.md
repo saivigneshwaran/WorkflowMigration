@@ -1,8 +1,8 @@
 # Workflow Migration
 
-This repository contains `uipath-workflow-migrator`, a Codex skill for migrating UiPath Studio projects with the bundled UiPath Upgrade CLI.
+This repository contains `uipath-workflow-migrator`, an AI coding-agent skill for migrating UiPath Studio projects with the bundled UiPath Upgrade CLI.
 
-The skill is intended to be copied to another machine and run without needing to locate a Studio installation folder. The required upgrade CLI is included under the skill support files.
+The skill is intended to be copied to another machine or installed by a compatible coding agent without needing to locate a Studio installation folder. The required upgrade CLI is included under the skill support files.
 
 ## What It Does
 
@@ -27,18 +27,44 @@ uipath-workflow-migrator/
   tools/
     uipath-upgrade-cli/
       UiPath.Upgrade.Cli/
+.agents/
+  skills -> ../skills
+skills/
+  uipath-workflow-migrator -> ../uipath-workflow-migrator
+.claude-plugin/
+.codex-plugin/
+.gemini/
+.cursor/
 ```
 
 Key files:
 
 - `uipath-workflow-migrator/SKILL.md` contains the skill instructions.
+- `skills/uipath-workflow-migrator` is a discovery alias for agents that scan a `skills/` directory.
+- `.agents/skills` is a discovery alias for agents that scan `.agents/skills`.
+- `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` provide shared root instructions for coding agents that read project-level context files.
 - `uipath-workflow-migrator/scripts/run_uipath_upgrade_cli.py` is the wrapper used to locate and run the bundled upgrade CLI.
 - `uipath-workflow-migrator/references/migration-operations-knowledge.md` contains source-neutral migration knowledge used during analysis and remediation.
 - `uipath-workflow-migrator/tools/uipath-upgrade-cli/UiPath.Upgrade.Cli/` contains the bundled Upgrade CLI folder.
+- `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.gemini/settings.json`, and `.cursor/rules/` provide compatibility metadata for common coding-agent hosts.
+
+## Agent Compatibility
+
+The repository follows the UiPath skills repository pattern for multi-tool support:
+
+- Claude-compatible plugin metadata points at `./skills/`.
+- Codex-compatible plugin metadata points at `./skills/`.
+- Gemini reads `GEMINI.md`, `AGENTS.md`, or `CLAUDE.md` as project context.
+- Cursor reads repository rules from `.cursor/rules/`.
+- Agents that scan `.agents/skills` can discover the same skill through the alias.
+
+The canonical skill content remains in `uipath-workflow-migrator/`; aliases avoid duplicating the large bundled CLI.
 
 ## Installation
 
-Clone this repository on the target machine, then copy the skill folder into the Codex skills directory:
+Clone this repository on the target machine. Compatible coding agents can use the repository-level metadata directly when installed as a plugin or opened as a skill repository.
+
+For a direct Codex skill install, copy the canonical skill folder:
 
 ```bash
 mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
@@ -49,7 +75,13 @@ The bundled CLI is intentionally stored as an extracted folder, not as a zip fil
 
 ## Usage
 
-Set a helper variable for the installed skill:
+Set a helper variable for the skill folder. From the repository root:
+
+```bash
+SKILL_DIR="$PWD/uipath-workflow-migrator"
+```
+
+For a direct Codex skill install:
 
 ```bash
 SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/uipath-workflow-migrator"

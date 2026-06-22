@@ -1,0 +1,10 @@
+---
+description: Workflow Migrator skill structure and repository conventions
+globs: ["uipath-workflow-migrator/**", "skills/uipath-workflow-migrator/**"]
+---
+
+This repository contains one self-contained skill: `uipath-workflow-migrator`.
+
+Before analyzing or migrating UiPath projects, read `uipath-workflow-migrator/SKILL.md`. Keep skill-specific workflow guidance and references inside the skill folder. Keep agent/tool discovery metadata in root files such as `.claude-plugin/`, `.codex-plugin/`, `.gemini/`, `.cursor/`, `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md`.
+
+Use the bundled CLI under `uipath-workflow-migrator/tools/uipath-upgrade-cli/` and do not require a Studio installation folder during normal execution.

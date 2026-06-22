@@ -11,7 +11,7 @@ Use this reference after an approved upgrade finishes.
 5. Re-run analysis or build validation.
 6. Repeat until findings are resolved or the remaining fixes require user decisions.
 
-The helper performs a deterministic first pass. Codex should continue with agent-driven fixes for unresolved findings instead of only reporting them.
+The helper performs a deterministic first pass. The coding agent should continue with agent-driven fixes for unresolved findings instead of only reporting them.
 
 ## Safe Automatic Fixes
 

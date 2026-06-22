@@ -1,0 +1,29 @@
+{
+  "name": "workflow-migration-marketplace",
+  "owner": {
+    "name": "saivigneshwaran"
+  },
+  "plugins": [
+    {
+      "name": "uipath-workflow-migrator",
+      "source": "./",
+      "description": "UiPath Workflow Migrator plugin for approval-gated Studio project migration with a bundled Upgrade CLI.",
+      "version": "0.1.0",
+      "author": {
+        "name": "saivigneshwaran"
+      },
+      "homepage": "https://github.com/saivigneshwaran/WorkflowMigration",
+      "repository": "https://github.com/saivigneshwaran/WorkflowMigration",
+      "license": "MIT",
+      "keywords": [
+        "uipath",
+        "workflow",
+        "migration",
+        "rpa",
+        "xaml",
+        "studio",
+        "upgrade"
+      ]
+    }
+  ]
+}
