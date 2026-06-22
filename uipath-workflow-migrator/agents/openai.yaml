@@ -1,4 +1,4 @@
 interface:
-  display_name: "UiPath Activity Migrator"
-  short_description: "Migrate UiPath project targets and activities"
-  default_prompt: "Use $uipath-activity-migrator to migrate this UiPath project with UiPath.Upgrade.Cli."
+  display_name: "UiPath Workflow Migrator"
+  short_description: "Analyze, report, and migrate UiPath projects"
+  default_prompt: "Use $uipath-workflow-migrator to analyze this UiPath project, generate a migration report, and ask before migrating."

@@ -1,13 +1,23 @@
 # UiPath.Upgrade.Cli Reference
 
-## Source Map
+## Bundled Tool Layout
 
-In the checked Studio source tree:
+Normal skill execution uses a bundled CLI, not a Studio source checkout. Place the published Workflow Migrator CLI under:
+
+```text
+tools/uipath-upgrade-cli/
+```
+
+Expected contents include `UiPath.Upgrade.exe` or `UiPath.Upgrade.dll`, runtime/dependency files, `appsettings.json`, and the `Extensions/` folder. The helper script searches this folder recursively and can also use `--cli` or `UIPATH_UPGRADE_CLI` for an explicit CLI path.
+
+## Historical Source Map
+
+These paths came from the one-time Studio source reference and are retained only for implementation context:
 
 - CLI project: `Upgrade/UiPath.Upgrade.Cli/UiPath.Upgrade.Cli.csproj`
 - Bootstrapper: `Upgrade/UiPath.Upgrade.Cli.Bootstrapper`
 - Solution: `Upgrade/UiPath.Upgrade.sln`
-- Expected CLI output: `Upgrade/Output/cli/<Configuration>/UiPath.Upgrade.exe`
+- Expected published CLI output: `Upgrade/Output/cli/<Configuration>/UiPath.Upgrade.exe`
 - Main entrypoint: `Upgrade/UiPath.Upgrade.Cli/Program.cs`
 - Core options: `Upgrade/UiPath.Upgrade.Cli/Commands/GlobalOptions.cs`
 - Project options: `Upgrade/UiPath.Upgrade.Cli/Commands/UpgradeCommandOptions.cs`
@@ -24,6 +34,8 @@ Root command name is `UiPath.Upgrade.exe`.
 - `upgrade`: runs the migration pipeline and writes an output project.
 - `bulk`: recursively finds UiPath projects under a folder and runs `analyze` or `upgrade`.
 - `version`: custom version handling exists in the CLI program.
+
+The skill's default helper workflow runs `analyze`, generates a Markdown report from the newest SARIF output, then stops unless `--approve-migration` is supplied after explicit user consent.
 
 Important options:
 

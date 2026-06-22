@@ -1,0 +1,11 @@
+{
+  "TracingConfig": {
+    "Logging": {
+      "Enabled": false,
+      "MinLevel": "Information"
+    },
+    "Tracing": {
+      "Enabled": false
+    }
+  }
+}

@@ -1,63 +1,48 @@
 #!/usr/bin/env python3
-"""Locate, build, and run UiPath.Upgrade.Cli from a Studio source checkout."""
+"""Run bundled UiPath.Upgrade.Cli with an optional consent-gated workflow."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
-import shutil
 import subprocess
 import sys
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
-CLI_PROJECT = Path("Upgrade/UiPath.Upgrade.Cli/UiPath.Upgrade.Cli.csproj")
-CLI_SOLUTION = Path("Upgrade/UiPath.Upgrade.sln")
 CLI_EXE_NAME = "UiPath.Upgrade.exe"
+CLI_DLL_NAME = "UiPath.Upgrade.dll"
+DEFAULT_TOOL_DIR = Path("tools/uipath-upgrade-cli")
+STOP_FOR_CONSENT_EXIT_CODE = 3
 
 
-def is_studio_root(path: Path) -> bool:
-    return (path / CLI_PROJECT).is_file()
+def skill_root() -> Path:
+    return Path(__file__).resolve().parents[1]
 
 
-def find_studio_root(explicit: str | None) -> Path | None:
-    candidates: list[Path] = []
-
-    if explicit:
-        candidates.append(Path(explicit).expanduser())
-
-    env_root = os.environ.get("UIPATH_STUDIO_ROOT")
-    if env_root:
-        candidates.append(Path(env_root).expanduser())
-
-    cwd = Path.cwd()
-    candidates.extend([cwd, *cwd.parents])
-    candidates.append(Path.home() / "Downloads" / "Studio-26.0.180")
-
-    seen: set[Path] = set()
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        if is_studio_root(resolved):
-            return resolved
-
-    return None
+def default_tool_root() -> Path:
+    return skill_root() / DEFAULT_TOOL_DIR
 
 
-def cli_candidates(studio_root: Path, configuration: str) -> list[Path]:
-    output = studio_root / "Upgrade" / "Output" / "cli" / configuration
-    candidates = [output / CLI_EXE_NAME]
+def cli_candidates(tool_root: Path) -> list[Path]:
+    candidates = [
+        tool_root / CLI_EXE_NAME,
+        tool_root / CLI_DLL_NAME,
+    ]
 
-    if output.exists():
-        candidates.extend(sorted(output.rglob(CLI_EXE_NAME)))
+    if tool_root.exists():
+        candidates.extend(sorted(tool_root.rglob(CLI_EXE_NAME)))
+        candidates.extend(sorted(tool_root.rglob(CLI_DLL_NAME)))
 
     return candidates
 
 
-def locate_cli(cli_path: str | None, studio_root: Path | None, configuration: str) -> Path | None:
+def locate_cli(cli_path: str | None, tool_root: str | None) -> Path | None:
     if cli_path:
         candidate = Path(cli_path).expanduser().resolve()
         return candidate if candidate.exists() else None
@@ -68,32 +53,12 @@ def locate_cli(cli_path: str | None, studio_root: Path | None, configuration: st
         if candidate.exists():
             return candidate
 
-    if studio_root:
-        for candidate in cli_candidates(studio_root, configuration):
-            if candidate.exists():
-                return candidate.resolve()
+    root = Path(tool_root).expanduser().resolve() if tool_root else default_tool_root()
+    for candidate in cli_candidates(root):
+        if candidate.exists():
+            return candidate.resolve()
 
     return None
-
-
-def build_cli(studio_root: Path, configuration: str) -> int:
-    dotnet = shutil.which("dotnet")
-    if not dotnet:
-        print("dotnet was not found on PATH.", file=sys.stderr)
-        return 2
-
-    build_target = studio_root / CLI_SOLUTION
-    if not build_target.exists():
-        build_target = studio_root / CLI_PROJECT
-
-    if platform.system() != "Windows":
-        print(
-            "Warning: UiPath.Upgrade.Cli targets net8.0-windows and may require a Windows host.",
-            file=sys.stderr,
-        )
-
-    command = [dotnet, "build", str(build_target), "--configuration", configuration]
-    return subprocess.run(command).returncode
 
 
 def run_cli(cli: Path, cli_args: list[str]) -> int:
@@ -102,11 +67,7 @@ def run_cli(cli: Path, cli_args: list[str]) -> int:
         return 0
 
     if cli.suffix.lower() == ".dll":
-        dotnet = shutil.which("dotnet")
-        if not dotnet:
-            print("dotnet was not found on PATH.", file=sys.stderr)
-            return 2
-        command = [dotnet, str(cli), *cli_args]
+        command = ["dotnet", str(cli), *cli_args]
     else:
         if platform.system() != "Windows" and cli.suffix.lower() == ".exe":
             print(
@@ -119,16 +80,203 @@ def run_cli(cli: Path, cli_args: list[str]) -> int:
     return subprocess.run(command).returncode
 
 
+def find_latest_sarif(project_path: Path) -> Path | None:
+    upgrade_dir = project_path / ".upgrade"
+    if not upgrade_dir.exists():
+        return None
+
+    sarif_files = [path for path in upgrade_dir.rglob("*.sarif") if path.is_file()]
+    if not sarif_files:
+        return None
+
+    return max(sarif_files, key=lambda path: path.stat().st_mtime)
+
+
+def load_sarif(path: Path | None) -> dict[str, Any] | None:
+    if not path:
+        return None
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"Could not parse SARIF report {path}: {exc}", file=sys.stderr)
+        return None
+
+
+def summarize_sarif(sarif: dict[str, Any] | None) -> tuple[Counter[str], list[dict[str, str]]]:
+    counts: Counter[str] = Counter()
+    findings: list[dict[str, str]] = []
+
+    if not sarif:
+        return counts, findings
+
+    for run in sarif.get("runs", []):
+        for result in run.get("results", []):
+            level = result.get("level") or "none"
+            rule_id = result.get("ruleId") or result.get("rule", {}).get("id") or "unknown"
+            message = result.get("message", {}).get("text") or result.get("message", {}).get("markdown") or ""
+            location = ""
+            locations = result.get("locations") or []
+            if locations:
+                artifact = (
+                    locations[0]
+                    .get("physicalLocation", {})
+                    .get("artifactLocation", {})
+                    .get("uri", "")
+                )
+                region = locations[0].get("physicalLocation", {}).get("region", {})
+                line = region.get("startLine")
+                location = f"{artifact}:{line}" if artifact and line else artifact
+
+            counts[level] += 1
+            findings.append(
+                {
+                    "level": level,
+                    "rule_id": rule_id,
+                    "message": message,
+                    "location": location,
+                }
+            )
+
+    return counts, findings
+
+
+def write_analysis_report(
+    report_path: Path,
+    *,
+    project_path: Path,
+    output_path: Path | None,
+    cli: Path,
+    analyze_exit_code: int,
+    sarif_path: Path | None,
+    sarif: dict[str, Any] | None,
+) -> Path:
+    counts, findings = summarize_sarif(sarif)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = [
+        "# UiPath Migration Analysis Report",
+        "",
+        f"- Generated UTC: {datetime.now(timezone.utc).isoformat()}",
+        f"- Project path: `{project_path}`",
+        f"- Planned output path: `{output_path or str(project_path) + '_Upgraded'}`",
+        f"- Workflow Migrator CLI: `{cli}`",
+        f"- Analyze exit code: `{analyze_exit_code}`",
+        f"- SARIF source: `{sarif_path}`" if sarif_path else "- SARIF source: not found",
+        "",
+        "## Finding Counts",
+        "",
+    ]
+
+    if counts:
+        for level in ["error", "warning", "note", "none"]:
+            lines.append(f"- {level}: {counts.get(level, 0)}")
+    else:
+        lines.append("- No SARIF findings were parsed.")
+
+    lines.extend(["", "## Top Findings", ""])
+
+    if findings:
+        for finding in findings[:25]:
+            message = finding["message"].replace("\n", " ").strip()
+            location = f" ({finding['location']})" if finding["location"] else ""
+            lines.append(f"- [{finding['level']}] `{finding['rule_id']}`{location}: {message}")
+    else:
+        lines.append("- No findings to list.")
+
+    lines.extend(
+        [
+            "",
+            "## Migration Gate",
+            "",
+            "Do not run `upgrade` until the user has reviewed this report and explicitly approved migration.",
+            "After approval, rerun the helper with `--approve-migration`.",
+            "",
+        ]
+    )
+
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return report_path
+
+
+def consent_gated_workflow(args: argparse.Namespace, cli: Path) -> int:
+    project_path = Path(args.project_path).expanduser().resolve()
+    if not project_path.exists():
+        print(f"Project path does not exist: {project_path}", file=sys.stderr)
+        return 2
+
+    output_path = Path(args.output_path).expanduser().resolve() if args.output_path else None
+    report_path = (
+        Path(args.report_path).expanduser().resolve()
+        if args.report_path
+        else project_path / ".upgrade" / "migration-analysis-report.md"
+    )
+
+    passthrough = args.cli_args
+    analyze_args = [
+        "analyze",
+        "--project-path",
+        str(project_path),
+        "--output-format",
+        "sarif",
+        *passthrough,
+    ]
+    if args.verbose and "--verbose" not in passthrough and "-v" not in passthrough:
+        analyze_args.append("--verbose")
+
+    analyze_exit_code = run_cli(cli, analyze_args)
+    sarif_path = find_latest_sarif(project_path)
+    sarif = load_sarif(sarif_path)
+    report = write_analysis_report(
+        report_path,
+        project_path=project_path,
+        output_path=output_path,
+        cli=cli,
+        analyze_exit_code=analyze_exit_code,
+        sarif_path=sarif_path,
+        sarif=sarif,
+    )
+
+    print(f"Analysis report: {report}")
+
+    if analyze_exit_code != 0:
+        print("Analyze failed. Review the report before attempting migration.", file=sys.stderr)
+        return analyze_exit_code
+
+    if not args.approve_migration:
+        print(
+            "Migration paused for user consent. Review the report, then rerun with --approve-migration.",
+            file=sys.stderr,
+        )
+        return STOP_FOR_CONSENT_EXIT_CODE
+
+    upgrade_args = [
+        "upgrade",
+        "--project-path",
+        str(project_path),
+        *passthrough,
+    ]
+    if output_path:
+        upgrade_args.extend(["--output-path", str(output_path)])
+    if args.verbose and "--verbose" not in passthrough and "-v" not in passthrough:
+        upgrade_args.append("--verbose")
+
+    return run_cli(cli, upgrade_args)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Locate, build, and run UiPath.Upgrade.exe from a Studio checkout."
+        description="Run bundled UiPath.Upgrade.exe and optionally enforce analyze/report/consent migration."
     )
-    parser.add_argument("--studio-root", help="Path to the Studio source root.")
-    parser.add_argument("--cli", help="Path to a prebuilt UiPath.Upgrade.exe.")
-    parser.add_argument("--configuration", default="Release", help="Build/output configuration.")
-    parser.add_argument("--no-build", action="store_true", help="Do not build if the CLI is missing.")
-    parser.add_argument("--build", action="store_true", help="Build the CLI before locating it.")
+    parser.add_argument("--cli", help="Path to a prebuilt UiPath.Upgrade.exe or UiPath.Upgrade.dll.")
+    parser.add_argument("--tool-root", help="Directory containing the bundled UiPath.Upgrade.Cli files.")
     parser.add_argument("--locate", action="store_true", help="Print the located CLI path and exit.")
+    parser.add_argument("--consent-gated", action="store_true", help="Run analyze, write a report, and stop unless migration is approved.")
+    parser.add_argument("--project-path", help="UiPath project folder for --consent-gated.")
+    parser.add_argument("--output-path", help="Planned output project folder for --consent-gated upgrade.")
+    parser.add_argument("--report-path", help="Markdown report path. Defaults to <project>/.upgrade/migration-analysis-report.md.")
+    parser.add_argument("--approve-migration", action="store_true", help="Allow the upgrade phase after analysis has completed.")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Pass --verbose to analyze/upgrade in --consent-gated mode.")
     parser.add_argument("cli_args", nargs=argparse.REMAINDER, help="Arguments passed to UiPath.Upgrade.exe after --.")
     args = parser.parse_args(argv)
 
@@ -140,37 +288,30 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    studio_root = find_studio_root(args.studio_root)
-
-    if args.build:
-        if not studio_root:
-            print("Could not find a Studio source root. Pass --studio-root.", file=sys.stderr)
-            return 2
-        build_code = build_cli(studio_root, args.configuration)
-        if build_code != 0:
-            return build_code
-
-    cli = locate_cli(args.cli, studio_root, args.configuration)
-
-    if not cli and not args.no_build and not args.locate:
-        if not studio_root:
-            print("Could not find UiPath.Upgrade.exe or a Studio source root.", file=sys.stderr)
-            return 2
-        build_code = build_cli(studio_root, args.configuration)
-        if build_code != 0:
-            return build_code
-        cli = locate_cli(args.cli, studio_root, args.configuration)
+    cli = locate_cli(args.cli, args.tool_root)
 
     if args.locate:
         if not cli:
-            print("Could not locate UiPath.Upgrade.exe.", file=sys.stderr)
+            print(
+                f"Could not locate UiPath.Upgrade.Cli. Place it under {default_tool_root()} or pass --cli.",
+                file=sys.stderr,
+            )
             return 2
         print(str(cli))
         return 0
 
     if not cli:
-        print("Could not locate UiPath.Upgrade.exe.", file=sys.stderr)
+        print(
+            f"Could not locate UiPath.Upgrade.Cli. Place it under {default_tool_root()} or pass --cli.",
+            file=sys.stderr,
+        )
         return 2
+
+    if args.consent_gated:
+        if not args.project_path:
+            print("--project-path is required with --consent-gated.", file=sys.stderr)
+            return 2
+        return consent_gated_workflow(args, cli)
 
     return run_cli(cli, args.cli_args)
 

@@ -16,7 +16,7 @@ If a built CLI supports a Windows to Cross-platform mode, use that documented co
 
 ## If Asked To Implement Support
 
-Use the existing Activity Migrator architecture rather than a one-off script:
+Use the existing Workflow Migrator architecture rather than a one-off script:
 
 1. Add an explicit target framework option, for example `--target-framework Windows|Portable`, instead of inferring from project state.
 2. Update `UpgradeOptions` to carry the target framework.

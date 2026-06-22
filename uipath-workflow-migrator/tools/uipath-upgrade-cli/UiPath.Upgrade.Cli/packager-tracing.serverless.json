@@ -1,0 +1,31 @@
+{
+  "TracingConfig": {
+    "KeysOfInterest": [
+      "API_VERSIONS_OVERRIDE",
+      "HDENS_ENV",
+      "IMAGE_VERSION",
+      "JOB_KEY",
+      "UIPATH_AGENT_CONSOLE_TRACE",
+      "UIPATH_ENVIRONMENT_TAG",
+      "UIPATH_DISABLE_SIGNALR",
+      "UIPATH_DOCKER_PLATFORM",
+      "UIPATH_DOCKER_CHROMIUM_PATH",
+      "UIPATH_INSTALLATION_ID",
+      "UIPATH_PACKAGER_LOCATION",
+      "UIPATH_ROBOT_REWRITE_URLS",
+      "UIPATH_SERVERLESS_CONTEXT",
+      "UIPATH_SERVERLESS_MULTIJOB",
+      "UIPATH_SERVERLESS_USEPOOLED_ROBOT_SERVICE",
+      "TRACINGCONFIG__*",
+      "UNATTENDED_USER_SCOPES_TOKEN"
+    ],
+    "ConnectionString": "InstrumentationKey=d094aed7-b80b-4374-81d1-fc92d73ac683;IngestionEndpoint=https://northeurope-0.in.applicationinsights.azure.com/;LiveEndpoint=https://northeurope.livediagnostics.monitor.azure.com/;ApplicationId=c88bd8c1-c10e-455e-91ac-9500fbe03292",
+    "Logging": {
+      "Enabled": true,
+      "MinLogLevel": "Information"
+    },
+    "Tracing": {
+      "Enabled": true
+    }
+  }
+}
