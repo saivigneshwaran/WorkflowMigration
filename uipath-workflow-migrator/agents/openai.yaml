@@ -1,4 +1,4 @@
 interface:
   display_name: "UiPath Workflow Migrator"
-  short_description: "Analyze, report, and migrate UiPath projects"
-  default_prompt: "Use $uipath-workflow-migrator to analyze this UiPath project, generate a migration report, and ask before migrating."
+  short_description: "Analyze, migrate, and remediate UiPath projects"
+  default_prompt: "Use $uipath-workflow-migrator to analyze this UiPath project, generate a migration report, ask before migrating, and remediate output errors after upgrade."

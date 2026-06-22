@@ -9,6 +9,7 @@ import os
 import platform
 import subprocess
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,8 @@ CLI_EXE_NAME = "UiPath.Upgrade.exe"
 CLI_DLL_NAME = "UiPath.Upgrade.dll"
 DEFAULT_TOOL_DIR = Path("tools/uipath-upgrade-cli")
 STOP_FOR_CONSENT_EXIT_CODE = 3
+DEFAULT_POLL_INTERVAL_SECONDS = 60.0
+MIN_POLL_INTERVAL_SECONDS = 5.0
 
 
 def skill_root() -> Path:
@@ -61,7 +64,77 @@ def locate_cli(cli_path: str | None, tool_root: str | None) -> Path | None:
     return None
 
 
-def run_cli(cli: Path, cli_args: list[str]) -> int:
+def env_status_mode() -> str:
+    mode = os.environ.get("UIPATH_MIGRATOR_STATUS_MODE", "wait").strip().lower()
+    return mode if mode in {"wait", "poll"} else "wait"
+
+
+def parse_poll_interval(value: str | None) -> float:
+    if not value:
+        return DEFAULT_POLL_INTERVAL_SECONDS
+
+    try:
+        interval = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("poll interval must be a number") from exc
+
+    if interval < MIN_POLL_INTERVAL_SECONDS:
+        raise argparse.ArgumentTypeError(
+            f"poll interval must be at least {MIN_POLL_INTERVAL_SECONDS:g} seconds"
+        )
+    return interval
+
+
+def env_poll_interval() -> float:
+    try:
+        return parse_poll_interval(os.environ.get("UIPATH_MIGRATOR_POLL_INTERVAL_SECONDS"))
+    except argparse.ArgumentTypeError:
+        return DEFAULT_POLL_INTERVAL_SECONDS
+
+
+def run_process(
+    command: list[str],
+    *,
+    status_mode: str,
+    poll_interval_seconds: float,
+    operation_name: str,
+) -> int:
+    if status_mode == "wait":
+        return subprocess.run(command).returncode
+
+    process = subprocess.Popen(command)
+    started = time.monotonic()
+
+    try:
+        while True:
+            try:
+                return process.wait(timeout=poll_interval_seconds)
+            except subprocess.TimeoutExpired:
+                elapsed = int(time.monotonic() - started)
+                print(
+                    f"{operation_name} still running after {elapsed}s; "
+                    f"next status check in {poll_interval_seconds:g}s.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+    except KeyboardInterrupt:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        return 130
+
+
+def run_cli(
+    cli: Path,
+    cli_args: list[str],
+    *,
+    status_mode: str = "wait",
+    poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    operation_name: str = "UiPath.Upgrade.Cli",
+) -> int:
     if not cli_args:
         print(str(cli))
         return 0
@@ -77,7 +150,12 @@ def run_cli(cli: Path, cli_args: list[str]) -> int:
             return 2
         command = [str(cli), *cli_args]
 
-    return subprocess.run(command).returncode
+    return run_process(
+        command,
+        status_mode=status_mode,
+        poll_interval_seconds=poll_interval_seconds,
+        operation_name=operation_name,
+    )
 
 
 def find_latest_sarif(project_path: Path) -> Path | None:
@@ -141,6 +219,31 @@ def summarize_sarif(sarif: dict[str, Any] | None) -> tuple[Counter[str], list[di
     return counts, findings
 
 
+def has_cli_option(args: list[str], *names: str) -> bool:
+    for arg in args:
+        if any(arg == name or arg.startswith(f"{name}=") for name in names):
+            return True
+    return False
+
+
+def build_analyze_args(project_path: Path, passthrough: list[str], verbose: bool) -> list[str]:
+    analyze_args = [
+        "analyze",
+        "--project-path",
+        str(project_path),
+    ]
+    if not has_cli_option(passthrough, "--output-format", "-f"):
+        analyze_args.extend(["--output-format", "sarif"])
+    analyze_args.extend(passthrough)
+    if verbose and not has_cli_option(passthrough, "--verbose", "-v"):
+        analyze_args.append("--verbose")
+    return analyze_args
+
+
+def default_output_path(project_path: Path) -> Path:
+    return Path(f"{project_path}_Upgraded")
+
+
 def write_analysis_report(
     report_path: Path,
     *,
@@ -199,6 +302,154 @@ def write_analysis_report(
     return report_path
 
 
+def apply_safe_remediations(project_path: Path, findings: list[dict[str, str]]) -> list[str]:
+    actions: list[str] = []
+    project_json = project_path / "project.json"
+    if not project_json.exists():
+        return actions
+
+    try:
+        project = json.loads(project_json.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return [f"Skipped project.json remediation because it could not be parsed: {exc}"]
+
+    target_framework = project.get("targetFramework")
+    if target_framework in {"Legacy", "Windows-Legacy"}:
+        project["targetFramework"] = "Windows"
+        project_json.write_text(json.dumps(project, indent=2) + "\n", encoding="utf-8")
+        actions.append(
+            f"Updated project.json targetFramework from {target_framework!r} to 'Windows'."
+        )
+
+    return actions
+
+
+def write_remediation_report(
+    report_path: Path,
+    *,
+    project_path: Path,
+    pre_analyze_exit_code: int | None,
+    post_analyze_exit_code: int | None,
+    pre_sarif_path: Path | None,
+    final_sarif_path: Path | None,
+    final_sarif: dict[str, Any] | None,
+    actions: list[str],
+) -> Path:
+    counts, findings = summarize_sarif(final_sarif)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = [
+        "# UiPath Post-Migration Remediation Report",
+        "",
+        f"- Generated UTC: {datetime.now(timezone.utc).isoformat()}",
+        f"- Migrated project path: `{project_path}`",
+        f"- Initial post-upgrade analyze exit code: `{pre_analyze_exit_code}`",
+        f"- Post-remediation analyze exit code: `{post_analyze_exit_code}`",
+        f"- Initial SARIF source: `{pre_sarif_path}`" if pre_sarif_path else "- Initial SARIF source: not found",
+        f"- Final SARIF source: `{final_sarif_path}`" if final_sarif_path else "- Final SARIF source: not found",
+        "",
+        "## Safe Remediation Actions",
+        "",
+    ]
+
+    if actions:
+        lines.extend(f"- {action}" for action in actions)
+    else:
+        lines.append("- No deterministic safe remediation pattern matched.")
+
+    lines.extend(["", "## Remaining Finding Counts", ""])
+    if counts:
+        for level in ["error", "warning", "note", "none"]:
+            lines.append(f"- {level}: {counts.get(level, 0)}")
+    else:
+        lines.append("- No SARIF findings were parsed.")
+
+    lines.extend(["", "## Remaining Top Findings", ""])
+    if findings:
+        for finding in findings[:25]:
+            message = finding["message"].replace("\n", " ").strip()
+            location = f" ({finding['location']})" if finding["location"] else ""
+            lines.append(f"- [{finding['level']}] `{finding['rule_id']}`{location}: {message}")
+    else:
+        lines.append("- No findings to list.")
+
+    lines.extend(
+        [
+            "",
+            "## Next Step",
+            "",
+            "Resolve remaining findings manually only when no safe automatic remediation is available.",
+            "",
+        ]
+    )
+
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return report_path
+
+
+def run_post_migration_remediation(
+    args: argparse.Namespace,
+    cli: Path,
+    output_path: Path,
+    passthrough: list[str],
+) -> None:
+    report_path = output_path / ".upgrade" / "post-migration-remediation-report.md"
+    if not output_path.exists():
+        report_path = output_path.parent / f"{output_path.name}-post-migration-remediation-report.md"
+        report = write_remediation_report(
+            report_path,
+            project_path=output_path,
+            pre_analyze_exit_code=None,
+            post_analyze_exit_code=None,
+            pre_sarif_path=None,
+            final_sarif_path=None,
+            final_sarif=None,
+            actions=[f"Skipped remediation because the migrated output path does not exist: {output_path}"],
+        )
+        print(f"Post-migration remediation report: {report}")
+        return
+
+    analyze_args = build_analyze_args(output_path, passthrough, args.verbose)
+    pre_exit_code = run_cli(
+        cli,
+        analyze_args,
+        status_mode=args.status_mode,
+        poll_interval_seconds=args.poll_interval_seconds,
+        operation_name="post-upgrade analysis",
+    )
+    pre_sarif_path = find_latest_sarif(output_path)
+    pre_sarif = load_sarif(pre_sarif_path)
+    _, pre_findings = summarize_sarif(pre_sarif)
+    actions = apply_safe_remediations(output_path, pre_findings)
+
+    if actions:
+        post_exit_code = run_cli(
+            cli,
+            analyze_args,
+            status_mode=args.status_mode,
+            poll_interval_seconds=args.poll_interval_seconds,
+            operation_name="post-remediation analysis",
+        )
+        final_sarif_path = find_latest_sarif(output_path)
+        final_sarif = load_sarif(final_sarif_path)
+    else:
+        post_exit_code = pre_exit_code
+        final_sarif_path = pre_sarif_path
+        final_sarif = pre_sarif
+
+    report = write_remediation_report(
+        report_path,
+        project_path=output_path,
+        pre_analyze_exit_code=pre_exit_code,
+        post_analyze_exit_code=post_exit_code,
+        pre_sarif_path=pre_sarif_path,
+        final_sarif_path=final_sarif_path,
+        final_sarif=final_sarif,
+        actions=actions,
+    )
+    print(f"Post-migration remediation report: {report}")
+
+
 def consent_gated_workflow(args: argparse.Namespace, cli: Path) -> int:
     project_path = Path(args.project_path).expanduser().resolve()
     if not project_path.exists():
@@ -206,6 +457,7 @@ def consent_gated_workflow(args: argparse.Namespace, cli: Path) -> int:
         return 2
 
     output_path = Path(args.output_path).expanduser().resolve() if args.output_path else None
+    resolved_output_path = output_path or default_output_path(project_path)
     report_path = (
         Path(args.report_path).expanduser().resolve()
         if args.report_path
@@ -213,24 +465,21 @@ def consent_gated_workflow(args: argparse.Namespace, cli: Path) -> int:
     )
 
     passthrough = args.cli_args
-    analyze_args = [
-        "analyze",
-        "--project-path",
-        str(project_path),
-        "--output-format",
-        "sarif",
-        *passthrough,
-    ]
-    if args.verbose and "--verbose" not in passthrough and "-v" not in passthrough:
-        analyze_args.append("--verbose")
+    analyze_args = build_analyze_args(project_path, passthrough, args.verbose)
 
-    analyze_exit_code = run_cli(cli, analyze_args)
+    analyze_exit_code = run_cli(
+        cli,
+        analyze_args,
+        status_mode=args.status_mode,
+        poll_interval_seconds=args.poll_interval_seconds,
+        operation_name="migration analysis",
+    )
     sarif_path = find_latest_sarif(project_path)
     sarif = load_sarif(sarif_path)
     report = write_analysis_report(
         report_path,
         project_path=project_path,
-        output_path=output_path,
+        output_path=resolved_output_path,
         cli=cli,
         analyze_exit_code=analyze_exit_code,
         sarif_path=sarif_path,
@@ -258,10 +507,19 @@ def consent_gated_workflow(args: argparse.Namespace, cli: Path) -> int:
     ]
     if output_path:
         upgrade_args.extend(["--output-path", str(output_path)])
-    if args.verbose and "--verbose" not in passthrough and "-v" not in passthrough:
+    if args.verbose and not has_cli_option(passthrough, "--verbose", "-v"):
         upgrade_args.append("--verbose")
 
-    return run_cli(cli, upgrade_args)
+    upgrade_exit_code = run_cli(
+        cli,
+        upgrade_args,
+        status_mode=args.status_mode,
+        poll_interval_seconds=args.poll_interval_seconds,
+        operation_name="migration upgrade",
+    )
+    if not args.skip_remediation:
+        run_post_migration_remediation(args, cli, resolved_output_path, passthrough)
+    return upgrade_exit_code
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -276,6 +534,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--output-path", help="Planned output project folder for --consent-gated upgrade.")
     parser.add_argument("--report-path", help="Markdown report path. Defaults to <project>/.upgrade/migration-analysis-report.md.")
     parser.add_argument("--approve-migration", action="store_true", help="Allow the upgrade phase after analysis has completed.")
+    parser.add_argument(
+        "--status-mode",
+        choices=["wait", "poll"],
+        default=env_status_mode(),
+        help="Use wait to block until the CLI exits, or poll to print coarse status updates.",
+    )
+    parser.add_argument(
+        "--poll-interval-seconds",
+        type=parse_poll_interval,
+        default=env_poll_interval(),
+        help="Status update interval for --status-mode poll. Defaults to 60 seconds.",
+    )
+    parser.add_argument(
+        "--skip-remediation",
+        action="store_true",
+        help="Skip the automatic post-upgrade analyze/remediation pass.",
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Pass --verbose to analyze/upgrade in --consent-gated mode.")
     parser.add_argument("cli_args", nargs=argparse.REMAINDER, help="Arguments passed to UiPath.Upgrade.exe after --.")
     args = parser.parse_args(argv)
@@ -313,7 +588,12 @@ def main(argv: list[str]) -> int:
             return 2
         return consent_gated_workflow(args, cli)
 
-    return run_cli(cli, args.cli_args)
+    return run_cli(
+        cli,
+        args.cli_args,
+        status_mode=args.status_mode,
+        poll_interval_seconds=args.poll_interval_seconds,
+    )
 
 
 if __name__ == "__main__":

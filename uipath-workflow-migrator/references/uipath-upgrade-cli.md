@@ -37,6 +37,10 @@ Root command name is `UiPath.Upgrade.exe`.
 
 The skill's default helper workflow runs `analyze`, generates a Markdown report from the newest SARIF output, then stops unless `--approve-migration` is supplied after explicit user consent.
 
+The helper waits for analyze/upgrade subprocesses to finish by default. Do not wrap it in continuous status polling. If progress updates are required, use `--status-mode poll` with `--poll-interval-seconds` set to a coarse interval; the default interval is 60 seconds and values under 5 seconds are rejected.
+
+After an approved upgrade, the helper runs a post-upgrade analysis against the output project, applies deterministic safe remediations, re-analyzes if it changed files, and writes `.upgrade/post-migration-remediation-report.md`. Pass `--skip-remediation` only when the caller will perform remediation separately.
+
 Important options:
 
 - `--project-path`, `-p`: required path to a UiPath project folder containing `project.json`.
@@ -48,6 +52,9 @@ Important options:
 - `--disabled-extensions`: comma-separated denylist.
 - `--disable-all-extensions`: disable extension-driven migrations.
 - `--ignore-missing-dependencies`: continue with warnings when dependencies cannot be restored.
+- Helper option `--status-mode wait|poll`: wait silently for process completion or print coarse status updates.
+- Helper option `--poll-interval-seconds`: status update interval for `--status-mode poll`; defaults to 60 seconds.
+- Helper option `--skip-remediation`: disables the default post-upgrade remediation pass.
 
 ## Built-In Extensions
 
