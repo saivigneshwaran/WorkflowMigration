@@ -36,6 +36,7 @@ skills/
 .gemini/
 .cursor/
 scripts/
+  install_skill.ps1
   install_skill.py
 ```
 
@@ -49,7 +50,8 @@ Key files:
 - `uipath-workflow-migrator/references/migration-operations-knowledge.md` contains source-neutral migration knowledge used during analysis and remediation.
 - `uipath-workflow-migrator/tools/uipath-upgrade-cli/UiPath.Upgrade.Cli/` contains the bundled Upgrade CLI folder.
 - `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.gemini/settings.json`, and `.cursor/rules/` provide compatibility metadata for common coding-agent hosts.
-- `scripts/install_skill.py` installs the canonical skill folder into common local skills directories.
+- `scripts/install_skill.ps1` installs the canonical skill folder into common local skills directories without requiring Python.
+- `scripts/install_skill.py` provides the same install flow when Python is available.
 
 ## Agent Compatibility
 
@@ -67,7 +69,27 @@ The canonical skill content remains in `uipath-workflow-migrator/`; aliases avoi
 
 Clone this repository on the target machine. Compatible coding agents can use the repository-level metadata directly when installed as a plugin or opened as a skill repository.
 
-Use the common installer when the agent expects skills to be present in a local skills directory:
+If this skill is later published into the UiPath skills catalog, install it with `uip skills install`:
+
+```bash
+uip skills install --agent codex
+```
+
+The current `uip skills install` command installs skills from the UiPath skills catalog. It does not take a local repository path for this custom skill, so use the repository installer below until the skill is available in that catalog.
+
+For this repository copy, use the common installer when the agent expects skills to be present in a local skills directory. On Windows or any machine without Python:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent all -Mode copy
+```
+
+With PowerShell 7:
+
+```powershell
+pwsh ./scripts/install_skill.ps1 -Agent all -Mode copy
+```
+
+If Python is available, the equivalent command is:
 
 ```bash
 python3 scripts/install_skill.py --agent all --mode copy
@@ -75,16 +97,24 @@ python3 scripts/install_skill.py --agent all --mode copy
 
 This installs the canonical skill folder into:
 
-- Codex: `${CODEX_HOME:-$HOME/.codex}/skills/uipath-workflow-migrator`
-- Agent-compatible skill root: `${AGENTS_HOME:-$HOME/.agents}/skills/uipath-workflow-migrator`
+- Codex/agent-compatible skill root: `$HOME/.agents/skills/uipath-workflow-migrator`
+- Cursor: `$HOME/.cursor/skills/uipath-workflow-migrator`
+- GitHub Copilot: `$HOME/.github/skills/uipath-workflow-migrator`
+- Gemini CLI: `$HOME/.gemini/skills/uipath-workflow-migrator`
+- OpenCode: `$HOME/.config/opencode/skills/uipath-workflow-migrator`
+- UiPath Autopilot: `$HOME/.autopilot/skills/uipath-workflow-migrator`
 
 For a custom skills directory:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent none -Target C:\path\to\skills -Mode copy
+```
 
 ```bash
 python3 scripts/install_skill.py --agent none --target /path/to/skills --mode copy
 ```
 
-Use `--mode symlink` when the target machine will keep this repository checkout in place and you want to avoid duplicating the bundled CLI. Use `--force` to replace an existing install.
+Use `-Mode symlink` or `--mode symlink` when the target machine will keep this repository checkout in place and you want to avoid duplicating the bundled CLI. Use `-Force` or `--force` to replace an existing install.
 
 The bundled CLI is intentionally stored as an extracted folder, not as a zip file. The skill can execute the CLI directly from `tools/uipath-upgrade-cli/UiPath.Upgrade.Cli/`.
 

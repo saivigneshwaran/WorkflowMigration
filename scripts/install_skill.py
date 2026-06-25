@@ -17,13 +17,6 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def codex_skills_dir() -> Path:
-    codex_home = os.environ.get("CODEX_HOME")
-    if codex_home:
-        return Path(codex_home).expanduser() / "skills"
-    return Path.home() / ".codex" / "skills"
-
-
 def agents_skills_dir() -> Path:
     agents_home = os.environ.get("AGENTS_HOME")
     if agents_home:
@@ -31,12 +24,26 @@ def agents_skills_dir() -> Path:
     return Path.home() / ".agents" / "skills"
 
 
-def resolve_targets(agent: str, explicit_targets: list[str]) -> list[Path]:
+def scoped_dir(scope: str, global_path: Path, local_path: Path) -> Path:
+    return global_path if scope == "global" else local_path
+
+
+def resolve_agent_targets(agent: str, scope: str, explicit_targets: list[str]) -> list[Path]:
     targets: list[Path] = []
-    if agent in ("codex", "all"):
-        targets.append(codex_skills_dir())
-    if agent in ("agents", "all"):
-        targets.append(agents_skills_dir())
+
+    if agent in ("codex", "agents", "all"):
+        targets.append(scoped_dir(scope, agents_skills_dir(), Path(".agents") / "skills"))
+    if agent in ("cursor", "all"):
+        targets.append(scoped_dir(scope, Path.home() / ".cursor" / "skills", Path(".cursor") / "skills"))
+    if agent in ("copilot", "all"):
+        targets.append(scoped_dir(scope, Path.home() / ".github" / "skills", Path(".github") / "skills"))
+    if agent in ("gemini", "all"):
+        targets.append(scoped_dir(scope, Path.home() / ".gemini" / "skills", Path(".gemini") / "skills"))
+    if agent in ("opencode", "all"):
+        targets.append(scoped_dir(scope, Path.home() / ".config" / "opencode" / "skills", Path(".opencode") / "skills"))
+    if agent in ("autopilot", "all"):
+        targets.append(scoped_dir(scope, Path.home() / ".autopilot" / "skills", Path(".autopilot") / "skills"))
+
     targets.extend(Path(target).expanduser() for target in explicit_targets)
 
     deduped: list[Path] = []
@@ -97,9 +104,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--agent",
-        choices=("codex", "agents", "all", "none"),
+        choices=("codex", "cursor", "copilot", "gemini", "opencode", "autopilot", "agents", "all", "none"),
         default="all",
         help="Built-in skill destination to install to. Use none with --target for custom paths.",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=("global", "local"),
+        default="global",
+        help="Install under the user's home directory or the current project.",
     )
     parser.add_argument(
         "--target",
@@ -134,7 +147,7 @@ def main() -> int:
         print(f"error: missing skill source at {source}", file=sys.stderr)
         return 2
 
-    targets = resolve_targets(args.agent, args.target)
+    targets = resolve_agent_targets(args.agent, args.scope, args.target)
     if not targets:
         print("error: no targets selected; pass --agent or --target", file=sys.stderr)
         return 2

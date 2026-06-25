@@ -10,7 +10,7 @@ This repository contains one self-contained AI coding-agent skill for UiPath wor
 
 When a user asks to analyze or migrate UiPath Studio projects, read `uipath-workflow-migrator/SKILL.md` before acting. The skill owns the migration workflow, bundled helper script, references, and bundled UiPath Upgrade CLI.
 
-Use `python3 scripts/install_skill.py --agent all --mode copy` from the repository root for the common local installation path. Use `--target <skills-dir>` for an agent-specific skills directory.
+Use `powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent all -Mode copy` from the repository root for the common no-Python local installation path. Use `-Target <skills-dir>` for an agent-specific skills directory. `uip skills install --agent <agent>` is catalog-based; use it only after this skill is available from the UiPath skills catalog.
 
 ## Repository Rules
 
