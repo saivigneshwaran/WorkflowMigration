@@ -36,6 +36,7 @@ skills/
 .gemini/
 .cursor/
 scripts/
+  install_skill.sh
   install_skill.ps1
   install_skill.py
 ```
@@ -50,6 +51,7 @@ Key files:
 - `uipath-workflow-migrator/references/migration-operations-knowledge.md` contains source-neutral migration knowledge used during analysis and remediation.
 - `uipath-workflow-migrator/tools/uipath-upgrade-cli/UiPath.Upgrade.Cli/` contains the bundled Upgrade CLI folder.
 - `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.gemini/settings.json`, and `.cursor/rules/` provide compatibility metadata for common coding-agent hosts.
+- `scripts/install_skill.sh` installs the canonical skill folder into common local skills directories on macOS/Linux without requiring Python.
 - `scripts/install_skill.ps1` installs the canonical skill folder into common local skills directories without requiring Python.
 - `scripts/install_skill.py` provides the same install flow when Python is available.
 
@@ -77,7 +79,13 @@ uip skills install --agent codex
 
 The current `uip skills install` command installs skills from the UiPath skills catalog. It does not take a local repository path for this custom skill, so use the repository installer below until the skill is available in that catalog.
 
-For this repository copy, use the common installer when the agent expects skills to be present in a local skills directory. On Windows or any machine without Python:
+For this repository copy, use the common installer when the agent expects skills to be present in a local skills directory. On macOS/Linux without Python:
+
+```bash
+./scripts/install_skill.sh --agent all --mode copy
+```
+
+On Windows without Python:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent all -Mode copy
@@ -105,6 +113,10 @@ This installs the canonical skill folder into:
 - UiPath Autopilot: `$HOME/.autopilot/skills/uipath-workflow-migrator`
 
 For a custom skills directory:
+
+```bash
+./scripts/install_skill.sh --agent none --target /path/to/skills --mode copy
+```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent none -Target C:\path\to\skills -Mode copy

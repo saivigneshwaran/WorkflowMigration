@@ -9,4 +9,4 @@ Before analyzing or migrating UiPath projects, read `uipath-workflow-migrator/SK
 
 Use the bundled CLI under `uipath-workflow-migrator/tools/uipath-upgrade-cli/` and do not require a Studio installation folder during normal execution.
 
-Use `powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent all -Mode copy` from the repository root for the common no-Python local installation path. Use `-Target <skills-dir>` for an agent-specific skills directory. `uip skills install --agent <agent>` is catalog-based; use it only after this skill is available from the UiPath skills catalog.
+Use `./scripts/install_skill.sh --agent all --mode copy` on macOS/Linux, or `powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent all -Mode copy` on Windows, for the common no-Python local installation path. Use `--target <skills-dir>` or `-Target <skills-dir>` for an agent-specific skills directory. `uip skills install --agent <agent>` is catalog-based; use it only after this skill is available from the UiPath skills catalog.
