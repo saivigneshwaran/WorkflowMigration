@@ -21,7 +21,7 @@ Always use this order:
 
 Never run `upgrade`, `bulk --command upgrade`, or any migration that writes files until the user has reviewed the analysis report and explicitly approved proceeding.
 
-Read [references/uipath-upgrade-cli.md](references/uipath-upgrade-cli.md) when you need command options, source paths, extension names, runtime status behavior, or pipeline details. Read [references/post-migration-remediation.md](references/post-migration-remediation.md) before applying nontrivial fixes after upgrade. Read [references/windows-to-cross-platform.md](references/windows-to-cross-platform.md) before promising or implementing Windows to Cross-platform migration.
+Read [references/uipath-upgrade-cli.md](references/uipath-upgrade-cli.md) when you need command options, source paths, extension names, runtime status behavior, or pipeline details. Read [references/reporting-guidelines.md](references/reporting-guidelines.md) before changing migration report structure or wording. Read [references/post-migration-remediation.md](references/post-migration-remediation.md) before applying nontrivial fixes after upgrade. Read [references/windows-to-cross-platform.md](references/windows-to-cross-platform.md) before promising or implementing Windows to Cross-platform migration.
 
 ## Operational Knowledge
 
@@ -83,6 +83,8 @@ python3 "$SKILL_DIR/scripts/run_uipath_upgrade_cli.py" \
 ```
 
 After an approved upgrade, the helper re-analyzes the output project, applies deterministic safe remediations, and writes `.upgrade/post-migration-remediation-report.md`. Continue with agent-driven fixes for remaining report findings instead of only suggesting next steps, but ask before touching the original source project or changing business logic.
+
+Migration analysis reports must be decision-oriented and consistent across runs. The top of the report should summarize readiness, blocking issues, risks, limitations, activities/packages requiring attention, automated changes, required user actions, and approval recommendation. Raw analyzer output belongs near the end of the report.
 
 For Classic to Modern activity conversion, keep extensions enabled. To be explicit, pass:
 

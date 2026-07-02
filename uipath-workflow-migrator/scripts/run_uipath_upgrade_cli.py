@@ -13,6 +13,7 @@ import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -219,6 +220,228 @@ def summarize_sarif(sarif: dict[str, Any] | None) -> tuple[Counter[str], list[di
     return counts, findings
 
 
+def normalize_text(value: str) -> str:
+    return " ".join(value.replace("\n", " ").split())
+
+
+def markdown_escape(value: str) -> str:
+    return normalize_text(value).replace("|", "\\|")
+
+
+def project_dependencies(project_path: Path) -> dict[str, str]:
+    project_json = project_path / "project.json"
+    if not project_json.exists():
+        return {}
+
+    try:
+        project = json.loads(project_json.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    dependencies = project.get("dependencies")
+    return dependencies if isinstance(dependencies, dict) else {}
+
+
+def project_target_framework(project_path: Path) -> str:
+    project_json = project_path / "project.json"
+    if not project_json.exists():
+        return "unknown"
+
+    try:
+        project = json.loads(project_json.read_text(encoding="utf-8"))
+    except Exception:
+        return "unknown"
+
+    return str(project.get("targetFramework") or "unknown")
+
+
+def custom_dependency_items(project_path: Path) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for name, version in sorted(project_dependencies(project_path).items()):
+        lower = name.lower()
+        if lower.startswith("uipath.") or lower in {"newtonsoft.json"}:
+            continue
+        items.append(
+            {
+                "area": "Package",
+                "item": f"{name} {version}",
+                "risk": "High",
+                "impact": "Custom or third-party package must be available and Windows-compatible.",
+                "action": "Confirm package source, compatibility, or replacement before approving upgrade.",
+            }
+        )
+    return items
+
+
+def custom_namespace_items(project_path: Path) -> list[dict[str, str]]:
+    namespace_pattern = re.compile(r"xmlns:[A-Za-z0-9_]+=[\"']([^\"']+)[\"']")
+    assembly_pattern = re.compile(r"assembly=([^;\"']+)")
+    ignored_prefixes = (
+        "System",
+        "Microsoft.",
+        "Microsoft",
+        "UiPath.",
+        "UiPath",
+        "Newtonsoft.",
+        "Newtonsoft",
+        "Google.",
+        "Google",
+        "mscorlib",
+    )
+    counts: Counter[str] = Counter()
+
+    for xaml in project_path.rglob("*.xaml"):
+        if ".upgrade" in xaml.parts:
+            continue
+        try:
+            text = xaml.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        for namespace in namespace_pattern.findall(text):
+            match = assembly_pattern.search(namespace)
+            if not match:
+                continue
+            assembly = match.group(1)
+            if assembly.startswith(ignored_prefixes):
+                continue
+            counts[assembly] += 1
+
+    return [
+        {
+            "area": "Activity namespace",
+            "item": f"{assembly} ({count} XAML reference{'s' if count != 1 else ''})",
+            "risk": "High",
+            "impact": "Custom activity namespaces may not load after Windows migration.",
+            "action": "Confirm a Windows-compatible package exists and validate affected workflows.",
+        }
+        for assembly, count in sorted(counts.items())
+    ]
+
+
+def package_from_message(message: str) -> str:
+    match = re.search(r"[Pp]ackage '([^']+)'(?: version '([^']+)')?", message)
+    if not match:
+        return ""
+    if match.group(2):
+        return f"{match.group(1)} {match.group(2)}"
+    return match.group(1)
+
+
+def classify_finding(finding: dict[str, str]) -> dict[str, str]:
+    rule_id = finding["rule_id"]
+    rule = rule_id.upper()
+    level = finding["level"].lower()
+    message = normalize_text(finding["message"])
+    message_lower = message.lower()
+    location = finding["location"]
+
+    classification = {
+        "level": finding["level"],
+        "rule_id": rule_id,
+        "location": location,
+        "message": message,
+        "category": "Raw Analyzer Output",
+        "severity": "Info",
+        "plain_language": message or "Analyzer event.",
+        "required_action": "No action required.",
+    }
+
+    if "RESTORE-MISSING-PACKAGE" in rule or (
+        "package" in message_lower and "not found" in message_lower
+    ):
+        package = package_from_message(message) or "Package"
+        classification.update(
+            {
+                "category": "Blocking Issues",
+                "severity": "Blocking",
+                "plain_language": f"{package} is not available from the configured package feeds.",
+                "required_action": "Add the package feed, restore the package, or identify a Windows-compatible replacement before approving upgrade.",
+            }
+        )
+    elif any(token in rule for token in ["TYPECHECK", "VALIDATE", "XAML-WORKFLOW-PARSE"]) and (
+        level == "error" or any(word in message_lower for word in ["invalid", "failed", "error"])
+    ):
+        classification.update(
+            {
+                "category": "Blocking Issues",
+                "severity": "Blocking",
+                "plain_language": "Workflow validation or parsing failed.",
+                "required_action": "Fix the referenced workflow issue and rerun analysis before approving upgrade.",
+            }
+        )
+    elif level == "error":
+        classification.update(
+            {
+                "category": "Blocking Issues",
+                "severity": "Blocking",
+                "plain_language": message or "Analyzer reported an error.",
+                "required_action": "Resolve this error and rerun analysis before approving upgrade.",
+            }
+        )
+    elif any(token in rule for token in ["UNSUPPORTED", "MANUAL", "CUSTOM", "LEGACY-ACTIVITY"]):
+        classification.update(
+            {
+                "category": "Activities and Packages Requiring Attention",
+                "severity": "High",
+                "plain_language": message or "Analyzer found an item requiring migration attention.",
+                "required_action": "Review the activity or package and decide whether a compatible replacement is required.",
+            }
+        )
+    elif any(token in rule for token in ["MAIL", "OFFICE365", "UIAUTOMATION", "PACKAGE-UPGRADE", "PACKAGE-MIGRATION", "FRAMEWORK-UPDATE"]):
+        classification.update(
+            {
+                "category": "Automated Changes Detected",
+                "severity": "Info",
+                "plain_language": message or "The analyzer identified an automatic migration change.",
+                "required_action": "Validate behavior after upgrade, especially authentication, selectors, and external service calls.",
+            }
+        )
+    elif level == "warning":
+        classification.update(
+            {
+                "category": "Activities and Packages Requiring Attention",
+                "severity": "Medium",
+                "plain_language": message or "Analyzer reported a warning.",
+                "required_action": "Review before approving upgrade.",
+            }
+        )
+
+    return classification
+
+
+def classify_findings(findings: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [classify_finding(finding) for finding in findings]
+
+
+def readiness_status(analyze_exit_code: int, classified: list[dict[str, str]], sarif_path: Path | None) -> str:
+    if analyze_exit_code != 0 or any(item["severity"] == "Blocking" for item in classified):
+        return "Blocked"
+    if not sarif_path:
+        return "Blocked"
+    if any(item["severity"] == "High" for item in classified):
+        return "High Risk"
+    if any(item["severity"] == "Medium" for item in classified):
+        return "Ready With Warnings"
+    return "Ready"
+
+
+def approval_recommendation(status: str) -> str:
+    if status == "Blocked":
+        return "Do not approve upgrade yet. Resolve blocking issues and rerun analysis."
+    if status == "High Risk":
+        return "Approve only after reviewing the highlighted activities/packages and accepting validation risk."
+    if status == "Ready With Warnings":
+        return "Approve only after reviewing warnings and planned validation."
+    return "Ready for approval, subject to normal post-upgrade validation."
+
+
+def add_table(lines: list[str], headers: list[str], rows: list[list[str]]) -> None:
+    lines.append("| " + " | ".join(headers) + " |")
+    lines.append("| " + " | ".join("---" for _ in headers) + " |")
+    for row in rows:
+        lines.append("| " + " | ".join(markdown_escape(value) for value in row) + " |")
+
+
 def has_cli_option(args: list[str], *names: str) -> bool:
     for arg in args:
         if any(arg == name or arg.startswith(f"{name}=") for name in names):
@@ -255,21 +478,127 @@ def write_analysis_report(
     sarif: dict[str, Any] | None,
 ) -> Path:
     counts, findings = summarize_sarif(sarif)
+    classified = classify_findings(findings)
+    status = readiness_status(analyze_exit_code, classified, sarif_path)
+    blocking = [item for item in classified if item["category"] == "Blocking Issues"]
+    automated = [item for item in classified if item["category"] == "Automated Changes Detected"]
+    attention = [
+        item for item in classified if item["category"] == "Activities and Packages Requiring Attention"
+    ]
+    project_attention = custom_dependency_items(project_path) + custom_namespace_items(project_path)
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines = [
         "# UiPath Migration Analysis Report",
         "",
+        "## Executive Summary",
+        "",
+        f"- Migration readiness: **{status}**",
+        f"- Approval recommendation: {approval_recommendation(status)}",
+        f"- Source target framework: `{project_target_framework(project_path)}`",
+        "- Target migration: `Windows`",
+        f"- Analyzer exit code: `{analyze_exit_code}`",
+        f"- Blocking issues: `{len(blocking)}`",
+        f"- Activities/packages requiring attention: `{len(attention) + len(project_attention)}`",
+        f"- Automated changes detected: `{len(automated)}`",
+        "",
+        "## Analysis Context",
+        "",
         f"- Generated UTC: {datetime.now(timezone.utc).isoformat()}",
         f"- Project path: `{project_path}`",
         f"- Planned output path: `{output_path or str(project_path) + '_Upgraded'}`",
         f"- Workflow Migrator CLI: `{cli}`",
-        f"- Analyze exit code: `{analyze_exit_code}`",
         f"- SARIF source: `{sarif_path}`" if sarif_path else "- SARIF source: not found",
         "",
-        "## Finding Counts",
+        "## Migration Risks and Limitations",
+        "",
+        "- The analyzer can identify package, parsing, validation, and supported migration findings, but it cannot prove runtime business equivalence.",
+        "- Selectors, credentials, Orchestrator assets, queues, connection names, file paths, and external service behavior must be validated after upgrade.",
+        "- Custom and third-party activity packages require special review because Windows compatibility depends on the package implementation and available feeds.",
+        "- Mail, Office 365, UI Automation, PDF, Excel, and external application behavior should be tested with representative non-production data.",
+        "- A clean analysis report does not replace opening/building the migrated project in Studio and running targeted workflow tests.",
+        "",
+        "## Blocking Issues",
         "",
     ]
+
+    if blocking:
+        add_table(
+            lines,
+            ["Rule", "Location", "Issue", "Required action"],
+            [
+                [
+                    item["rule_id"],
+                    item["location"] or "-",
+                    item["plain_language"],
+                    item["required_action"],
+                ]
+                for item in blocking
+            ],
+        )
+    else:
+        lines.append("- None found.")
+
+    lines.extend(["", "## Activities and Packages Requiring Attention", ""])
+
+    attention_rows = [
+        [
+            item["rule_id"],
+            item["location"] or "-",
+            item["severity"],
+            item["plain_language"],
+            item["required_action"],
+        ]
+        for item in attention
+    ]
+    attention_rows.extend(
+        [
+            [item["area"], item["item"], item["risk"], item["impact"], item["action"]]
+            for item in project_attention
+        ]
+    )
+    if attention_rows:
+        add_table(lines, ["Area", "Item", "Risk", "Impact", "Required action"], attention_rows)
+    else:
+        lines.append("- None found.")
+
+    lines.extend(["", "## Automated Changes Detected", ""])
+
+    if automated:
+        add_table(
+            lines,
+            ["Rule", "Location", "Detected change", "Validation required"],
+            [
+                [
+                    item["rule_id"],
+                    item["location"] or "-",
+                    item["plain_language"],
+                    item["required_action"],
+                ]
+                for item in automated
+            ],
+        )
+    else:
+        lines.append("- None found.")
+
+    lines.extend(["", "## Required User Actions", ""])
+    required_actions: list[str] = []
+    for item in blocking + attention:
+        action = item["required_action"]
+        if action not in required_actions:
+            required_actions.append(action)
+    for item in project_attention:
+        action = item["action"]
+        if action not in required_actions:
+            required_actions.append(action)
+
+    if required_actions:
+        lines.extend(f"- {action}" for action in required_actions)
+    else:
+        lines.append("- Review the automated changes and run normal post-upgrade validation.")
+
+    lines.extend(["", "## Approval Recommendation", "", approval_recommendation(status), ""])
+    lines.extend(["", "## Finding Counts", ""])
 
     if counts:
         for level in ["error", "warning", "note", "none"]:
@@ -277,15 +606,16 @@ def write_analysis_report(
     else:
         lines.append("- No SARIF findings were parsed.")
 
-    lines.extend(["", "## Top Findings", ""])
+    lines.extend(["", "## Raw Analyzer Output", ""])
 
-    if findings:
-        for finding in findings[:25]:
-            message = finding["message"].replace("\n", " ").strip()
-            location = f" ({finding['location']})" if finding["location"] else ""
-            lines.append(f"- [{finding['level']}] `{finding['rule_id']}`{location}: {message}")
+    if classified:
+        for item in classified:
+            location = f" ({item['location']})" if item["location"] else ""
+            lines.append(
+                f"- [{item['level']}] `{item['rule_id']}`{location}: {item['message']}"
+            )
     else:
-        lines.append("- No findings to list.")
+        lines.append("- No analyzer findings to list.")
 
     lines.extend(
         [
