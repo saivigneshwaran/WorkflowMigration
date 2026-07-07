@@ -4,16 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-import re
 from typing import Any
 
 
@@ -255,6 +256,110 @@ def project_target_framework(project_path: Path) -> str:
     return str(project.get("targetFramework") or "unknown")
 
 
+def project_name(project_path: Path) -> str:
+    project_json = project_path / "project.json"
+    if not project_json.exists():
+        return project_path.name
+
+    try:
+        project = json.loads(project_json.read_text(encoding="utf-8"))
+    except Exception:
+        return project_path.name
+
+    return str(project.get("name") or project_path.name)
+
+
+def format_examples(values: list[str], limit: int = 8) -> str:
+    unique: list[str] = []
+    for value in values:
+        if value and value not in unique:
+            unique.append(value)
+    if not unique:
+        return "-"
+    suffix = f"; +{len(unique) - limit} more" if len(unique) > limit else ""
+    return "; ".join(unique[:limit]) + suffix
+
+
+def read_xaml_files(project_path: Path) -> list[tuple[Path, list[str]]]:
+    files: list[tuple[Path, list[str]]] = []
+    for xaml in sorted(project_path.rglob("*.xaml")):
+        if ".upgrade" in xaml.parts:
+            continue
+        try:
+            files.append((xaml, xaml.read_text(encoding="utf-8", errors="ignore").splitlines()))
+        except Exception:
+            continue
+    return files
+
+
+def relative_location(project_path: Path, path: Path, line_number: int | None = None) -> str:
+    try:
+        relative = path.relative_to(project_path)
+    except ValueError:
+        relative = path
+    if line_number:
+        return f"{relative}:{line_number}"
+    return str(relative)
+
+
+def xaml_attr(fragment: str, name: str) -> str:
+    match = re.search(rf"\b{name}=[\"']([^\"']*)[\"']", fragment)
+    return html.unescape(match.group(1)) if match else ""
+
+
+def activity_display(fragment: str, class_name: str) -> str:
+    display_name = xaml_attr(fragment, "DisplayName")
+    return display_name or class_name
+
+
+def activity_records(project_path: Path) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    tag_pattern = re.compile(r"<([A-Za-z_][\w.-]*:)?([A-Za-z_][\w.]*)\b")
+
+    for path, lines in read_xaml_files(project_path):
+        for index, line in enumerate(lines):
+            match = tag_pattern.search(line)
+            if not match:
+                continue
+            class_name = match.group(2)
+            if "." in class_name:
+                continue
+            window = " ".join(lines[index : min(index + 4, len(lines))])
+            display = activity_display(window, class_name)
+            records.append(
+                {
+                    "class": class_name,
+                    "display": display,
+                    "location": relative_location(project_path, path, index + 1),
+                    "fragment": normalize_text(window),
+                }
+            )
+
+    return records
+
+
+def matching_activities(records: list[dict[str, str]], names: set[str]) -> list[dict[str, str]]:
+    lowered = {name.lower() for name in names}
+    return [record for record in records if record["class"].lower() in lowered]
+
+
+def matching_fragments(
+    project_path: Path,
+    patterns: list[re.Pattern[str]],
+    *,
+    limit: int = 25,
+) -> list[str]:
+    matches: list[str] = []
+    for path, lines in read_xaml_files(project_path):
+        for index, line in enumerate(lines):
+            if any(pattern.search(line) for pattern in patterns):
+                snippet = normalize_text(html.unescape(line))
+                matches.append(f"{relative_location(project_path, path, index + 1)} {snippet}")
+                if len(matches) >= limit:
+                    return matches
+    return matches
+
+
 def custom_dependency_items(project_path: Path) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for name, version in sorted(project_dependencies(project_path).items()):
@@ -413,6 +518,23 @@ def classify_findings(findings: list[dict[str, str]]) -> list[dict[str, str]]:
     return [classify_finding(finding) for finding in findings]
 
 
+def dedupe_findings(findings: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen: set[tuple[str, str, str, str]] = set()
+    unique: list[dict[str, str]] = []
+    for finding in findings:
+        key = (
+            finding.get("level", ""),
+            finding.get("rule_id", ""),
+            normalize_text(finding.get("message", "")),
+            finding.get("location", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(finding)
+    return unique
+
+
 def readiness_status(analyze_exit_code: int, classified: list[dict[str, str]], sarif_path: Path | None) -> str:
     if analyze_exit_code != 0 or any(item["severity"] == "Blocking" for item in classified):
         return "Blocked"
@@ -433,6 +555,357 @@ def approval_recommendation(status: str) -> str:
     if status == "Ready With Warnings":
         return "Approve only after reviewing warnings and planned validation."
     return "Ready for approval, subject to normal post-upgrade validation."
+
+
+def risk_item(
+    *,
+    severity: str,
+    location: str,
+    component: str,
+    failure_mode: str,
+    replacement: str,
+    resolution: str,
+    owner: str,
+    automation: str,
+    validation: str,
+    evidence: str,
+) -> dict[str, str]:
+    return {
+        "severity": severity,
+        "location": location,
+        "component": component,
+        "failure_mode": failure_mode,
+        "replacement": replacement,
+        "resolution": resolution,
+        "owner": owner,
+        "automation": automation,
+        "validation": validation,
+        "evidence": evidence,
+    }
+
+
+def sarif_examples(classified: list[dict[str, str]], predicate: Any) -> list[str]:
+    examples: list[str] = []
+    for item in classified:
+        if predicate(item):
+            location = item["location"] or "-"
+            message = item["message"] or item["plain_language"]
+            examples.append(f"{location} `{item['rule_id']}` {message}")
+    return examples
+
+
+def activity_examples(records: list[dict[str, str]], names: set[str], limit: int = 8) -> list[str]:
+    return [
+        f"{record['location']} `{record['display']}` ({record['class']})"
+        for record in matching_activities(records, names)[:limit]
+    ]
+
+
+def has_dependency(project_path: Path, *package_names: str) -> bool:
+    dependencies = {name.lower() for name in project_dependencies(project_path)}
+    return any(package_name.lower() in dependencies for package_name in package_names)
+
+
+def build_assessment_risks(
+    project_path: Path,
+    classified: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    records = activity_records(project_path)
+    risks: list[dict[str, str]] = []
+
+    type_missing_examples = sarif_examples(
+        classified,
+        lambda item: "TYPE-MISSING" in item["rule_id"].upper()
+        or "type" in item["message"].lower()
+        and "not found" in item["message"].lower(),
+    )
+    missing_package_examples = sarif_examples(
+        classified,
+        lambda item: item["category"] == "Blocking Issues"
+        and (
+            "RESTORE-MISSING-PACKAGE" in item["rule_id"].upper()
+            or "not available from the configured package feeds" in item["plain_language"]
+            or ("package" in item["message"].lower() and "not found" in item["message"].lower())
+        ),
+    )
+    missing_dependencies = [
+        f"{name} {version}"
+        for name, version in sorted(project_dependencies(project_path).items())
+        if not name.lower().startswith("uipath.") and name.lower() != "newtonsoft.json"
+    ]
+    if missing_package_examples or missing_dependencies:
+        risks.append(
+            risk_item(
+                severity="Blocker" if missing_package_examples else "High",
+                location="project.json dependencies",
+                component=format_examples(missing_dependencies) if missing_dependencies else "Package restore",
+                failure_mode="Dependency restore or type resolution can fail; converted workflows may contain unresolved activities.",
+                replacement="Migrate and publish Windows-compatible libraries first, or replace unavailable custom activities with supported UI Automation, API, or coded workflow implementations.",
+                resolution="Confirm NuGet/Orchestrator feeds and credentials, obtain source or package access, inspect target frameworks, republish Windows-compatible libraries, then rerun analysis.",
+                owner="Client Owner + Human + Coding Agent",
+                automation="Partial: the coding agent can update references after feeds/source are available; humans must provide package ownership and runtime validation.",
+                validation="Restore succeeds; SARIF has no missing package/type findings; migrated project opens and validates in Studio.",
+                evidence=format_examples(missing_package_examples + type_missing_examples),
+            )
+        )
+
+    if type_missing_examples and not missing_package_examples:
+        risks.append(
+            risk_item(
+                severity="Blocker",
+                location="SARIF type resolution findings",
+                component="Custom or unavailable activity types",
+                failure_mode="Workflows cannot compile until all activity classes can be resolved in Windows.",
+                replacement="Windows-compatible package version or redesigned workflow logic.",
+                resolution="Map each missing type to its package/library, restore or migrate that library, then rerun analyze.",
+                owner="Client Owner + Human + Coding Agent",
+                automation="Partial: agent can map XAML namespaces and update references; human/client must provide package source or replacement decisions.",
+                validation="No TYPE-MISSING findings; project validates/builds.",
+                evidence=format_examples(type_missing_examples),
+            )
+        )
+
+    expression_examples = matching_fragments(
+        project_path,
+        [re.compile(r"=\s*[\"']\[\s*\{\s*\}\s*\][\"']"), re.compile(r">\s*\[\s*\{\s*\}\s*\]\s*<")],
+    )
+    expression_examples.extend(
+        sarif_examples(
+            classified,
+            lambda item: "BC36914" in item["message"]
+            or "BC36915" in item["message"]
+            or "{}" in item["message"],
+        )
+    )
+    if expression_examples:
+        risks.append(
+            risk_item(
+                severity="Blocker",
+                location=format_examples(expression_examples),
+                component="Ambiguous VB array initializer `{}`",
+                failure_mode="Windows validation can fail because stricter type inference cannot infer the array element type.",
+                replacement="Use a typed initializer such as `New Object() {}` or explicit typed values matching the target property.",
+                resolution="Replace ambiguous initializers, then verify the receiving activity property and workflow validation.",
+                owner="Coding Agent",
+                automation="High: the coding agent can apply deterministic expression fixes, with schema/property verification.",
+                validation="No BC36914/BC36915 or ST-PMG-002 equivalent findings; Windows validation/build passes.",
+                evidence=format_examples(expression_examples),
+            )
+        )
+
+    save_image_examples = activity_examples(records, {"SaveImage", "Save Image"})
+    save_image_examples.extend(
+        sarif_examples(
+            classified,
+            lambda item: "SAVEIMAGE" in item["message"].upper()
+            or "MIGRATIONNOTIMPLEMENTED" in item["message"].upper(),
+        )
+    )
+    if save_image_examples:
+        risks.append(
+            risk_item(
+                severity="Blocker",
+                location=format_examples(save_image_examples),
+                component="Classic `SaveImage` activity",
+                failure_mode="Workflow Migrator may not implement this conversion, leaving screenshot persistence unresolved.",
+                replacement="Windows-compatible screenshot/file persistence helper or supported image/file activities.",
+                resolution="Refactor the screenshot save step before upgrade or immediately after migration, preserving downstream upload/use behavior.",
+                owner="Coding Agent + Human",
+                automation="Partial: agent can refactor deterministic file save logic; human must validate screenshot capture in the target robot session.",
+                validation="No migration-not-implemented finding; screenshot file is created and consumed successfully at runtime.",
+                evidence=format_examples(save_image_examples),
+            )
+        )
+
+    classic_uia_names = {
+        "AttachBrowser",
+        "AttachWindow",
+        "Check",
+        "Click",
+        "ClickText",
+        "ElementExists",
+        "FindElement",
+        "GetAttribute",
+        "GetFullText",
+        "GetText",
+        "GetValue",
+        "GetVisibleText",
+        "Highlight",
+        "Hover",
+        "OpenBrowser",
+        "SelectItem",
+        "SetText",
+        "TakeScreenshot",
+        "TypeInto",
+        "UiElementExists",
+    }
+    classic_uia_examples = activity_examples(records, classic_uia_names)
+    if classic_uia_examples or has_dependency(project_path, "UiPath.UIAutomation.Activities"):
+        risks.append(
+            risk_item(
+                severity="High",
+                location=format_examples(classic_uia_examples) if classic_uia_examples else "UiPath.UIAutomation.Activities dependency",
+                component="Classic UI Automation activities",
+                failure_mode="Supported activities may migrate, but selectors, application scopes, null input element behavior, and runtime timing can change.",
+                replacement="Use modern UI Automation activities under stable `Use Application/Browser` scopes and Object Repository targets where appropriate.",
+                resolution="Run Workflow Migrator with UIA extension enabled, inspect generated scopes, recapture unstable selectors, and smoke-test representative application flows.",
+                owner="Workflow Migrator + Human + Coding Agent",
+                automation="Partial: Workflow Migrator handles supported conversions; agent can organize obvious scopes; humans must validate UI behavior.",
+                validation="ST-AMG-001/post-migration annotations reviewed; selectors and application smoke tests pass.",
+                evidence=format_examples(classic_uia_examples),
+            )
+        )
+
+    image_uia_names = {"ClickImage", "ClickOCRText", "FindImage", "ImageExists", "WaitImageAppear", "WaitImageVanish"}
+    image_uia_examples = activity_examples(records, image_uia_names)
+    if image_uia_examples:
+        risks.append(
+            risk_item(
+                severity="High",
+                location=format_examples(image_uia_examples),
+                component="Image/OCR-based UI Automation",
+                failure_mode="Image and OCR actions are sensitive to resolution, themes, OCR engine scope, and generated modern application scopes.",
+                replacement="Prefer selector-based modern UIA activities; keep OCR/image only where no stable selector exists.",
+                resolution="Review each image/OCR activity, replace with selector-based actions when possible, and validate screen resolution/OCR behavior.",
+                owner="Coding Agent + Human",
+                automation="Partial: agent can identify and replace obvious cases; human must validate against the real application UI.",
+                validation="No unexpected image/OCR migration warnings; target UI flow passes at runtime.",
+                evidence=format_examples(image_uia_examples),
+            )
+        )
+
+    productivity_examples = matching_fragments(
+        project_path,
+        [
+            re.compile(r"GSuite|Google|Office365|Microsoft365", re.IGNORECASE),
+            re.compile(r"UseConnectionService|ConnectionId|ServiceAccount|KeyPath", re.IGNORECASE),
+        ],
+    )
+    if productivity_examples or has_dependency(
+        project_path,
+        "UiPath.GSuite.Activities",
+        "UiPath.MicrosoftOffice365.Activities",
+    ):
+        risks.append(
+            risk_item(
+                severity="High",
+                location=format_examples(productivity_examples) if productivity_examples else "Productivity activity dependency",
+                component="GSuite/Microsoft 365 productivity connections",
+                failure_mode="Migrated productivity activities may require Orchestrator connection IDs; local service-account keys and legacy auth can fail in the target environment.",
+                replacement="Provision Orchestrator connections and pass Workflow Migrator a `--config=<connection.json>` mapping for required `ConnectionId` values.",
+                resolution="Inventory every productivity scope/activity, create connection IDs, prepare config JSON, and remove or secure local key-file references.",
+                owner="Client Owner + Human + Coding Agent",
+                automation="Partial: agent can generate config templates and update references; client/human must provision connections and validate permissions.",
+                validation="Migrated project uses expected ConnectionId values; read/write/upload/send operations pass with non-production data.",
+                evidence=format_examples(productivity_examples),
+            )
+        )
+
+    smtp_examples = matching_fragments(
+        project_path,
+        [
+            re.compile(r"SMTP|SendSMTP|Smtp", re.IGNORECASE),
+            re.compile(r"\b(Server|Port|From)=['\"]", re.IGNORECASE),
+        ],
+    )
+    if smtp_examples or has_dependency(project_path, "UiPath.Mail.Activities"):
+        risks.append(
+            risk_item(
+                severity="Medium",
+                location=format_examples(smtp_examples) if smtp_examples else "UiPath.Mail.Activities dependency",
+                component="SMTP/Mail activities and hardcoded mail settings",
+                failure_mode="Notifications can fail if relay, sender, authentication, package behavior, or network access changes in Windows runtime.",
+                replacement="Use Microsoft 365 connection activities when appropriate, or externalize SMTP relay settings into assets/configuration.",
+                resolution="Decide SMTP versus M365, provision the connection or relay, move hardcoded server/sender/port values to config/assets, and send test notifications.",
+                owner="Client Owner + Coding Agent",
+                automation="Partial: agent can refactor hardcoded values; client/human must approve relay/M365 connection strategy.",
+                validation="Success and failure notification smoke tests pass from the target robot environment.",
+                evidence=format_examples(smtp_examples),
+            )
+        )
+
+    hardcoded_examples = matching_fragments(
+        project_path,
+        [
+            re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+            re.compile(r"[A-Za-z]:\\[^\"']+"),
+            re.compile(r"https?://[^\"'\s<>]+"),
+            re.compile(r"\b(Server|Host|UserEmail|KeyPath|FolderId|FileId)=['\"][^'\"]+['\"]", re.IGNORECASE),
+        ],
+        limit=20,
+    )
+    if hardcoded_examples:
+        risks.append(
+            risk_item(
+                severity="Medium",
+                location=format_examples(hardcoded_examples),
+                component="Hardcoded configuration values",
+                failure_mode="Environment-specific paths, URLs, email addresses, IDs, or key paths may break after migration or expose secrets/configuration in source.",
+                replacement="Use Orchestrator assets, Config.xlsx, environment-specific settings, or secure credential stores.",
+                resolution="Classify each hardcoded value, externalize environment-specific settings, and mask or rotate sensitive values where needed.",
+                owner="Coding Agent + Human",
+                automation="Partial: agent can identify and externalize obvious constants; human/client must confirm correct target values.",
+                validation="No target-environment constants remain in source; migrated run uses approved assets/configuration.",
+                evidence=format_examples(hardcoded_examples),
+            )
+        )
+
+    soap_examples = matching_fragments(project_path, [re.compile(r"SOAP|WebService|ServiceReference", re.IGNORECASE)])
+    if soap_examples:
+        risks.append(
+            risk_item(
+                severity="High",
+                location=format_examples(soap_examples),
+                component="SOAP/web service integration",
+                failure_mode="SOAP web services are not supported in Windows and cross-platform projects.",
+                replacement="Replace with HTTP/REST calls, supported libraries, or a coded workflow/client compatible with the target runtime.",
+                resolution="Inventory service calls, confirm available replacement API/client, then refactor before or after pilot migration.",
+                owner="Client Owner + Coding Agent",
+                automation="Partial: agent can refactor once API contract is known; client/human must provide service contract and test access.",
+                validation="Replacement service calls pass integration tests in the target environment.",
+                evidence=format_examples(soap_examples),
+            )
+        )
+
+    return risks
+
+
+def assign_risk_ids(risks: list[dict[str, str]]) -> list[dict[str, str]]:
+    for index, risk in enumerate(risks, start=1):
+        risk["id"] = f"R-{index:03d}"
+    return risks
+
+
+def risk_status(risks: list[dict[str, str]], fallback_status: str) -> str:
+    if any(risk["severity"] == "Blocker" for risk in risks):
+        return "Blocked"
+    if any(risk["severity"] == "High" for risk in risks):
+        return "High Risk"
+    if any(risk["severity"] == "Medium" for risk in risks):
+        return "Ready With Warnings"
+    return fallback_status
+
+
+def recommended_migration_path(risks: list[dict[str, str]]) -> str:
+    if any(risk["severity"] == "Blocker" for risk in risks):
+        return "Resolve blockers first, then run an Workflow Migrator pilot on a project copy."
+    if any("Classic UI Automation" in risk["component"] for risk in risks):
+        return "Run an Workflow Migrator pilot on a project copy, then validate selectors and generated application scopes."
+    return "Proceed with a consent-gated Workflow Migrator pilot on a project copy, followed by Studio validation."
+
+
+def has_restore_blocker(sarif: dict[str, Any] | None) -> bool:
+    _, findings = summarize_sarif(sarif)
+    classified = classify_findings(findings)
+    return any(
+        item["category"] == "Blocking Issues"
+        and (
+            "RESTORE-MISSING-PACKAGE" in item["rule_id"].upper()
+            or ("package" in item["message"].lower() and "not found" in item["message"].lower())
+            or "not available from the configured package feeds" in item["plain_language"]
+        )
+        for item in classified
+    )
 
 
 def add_table(lines: list[str], headers: list[str], rows: list[list[str]]) -> None:
@@ -476,89 +949,167 @@ def write_analysis_report(
     analyze_exit_code: int,
     sarif_path: Path | None,
     sarif: dict[str, Any] | None,
+    deep_analyze_exit_code: int | None = None,
+    deep_sarif_path: Path | None = None,
+    deep_sarif: dict[str, Any] | None = None,
 ) -> Path:
     counts, findings = summarize_sarif(sarif)
-    classified = classify_findings(findings)
-    status = readiness_status(analyze_exit_code, classified, sarif_path)
-    blocking = [item for item in classified if item["category"] == "Blocking Issues"]
+    deep_counts, deep_findings = summarize_sarif(deep_sarif)
+    classified = classify_findings(dedupe_findings(findings + deep_findings))
+    base_status = readiness_status(analyze_exit_code, classified, sarif_path)
+    risks = assign_risk_ids(build_assessment_risks(project_path, classified))
+    status = risk_status(risks, base_status)
+    blocking_risks = [risk for risk in risks if risk["severity"] == "Blocker"]
+    high_risks = [risk for risk in risks if risk["severity"] == "High"]
+    medium_risks = [risk for risk in risks if risk["severity"] == "Medium"]
     automated = [item for item in classified if item["category"] == "Automated Changes Detected"]
-    attention = [
-        item for item in classified if item["category"] == "Activities and Packages Requiring Attention"
-    ]
     project_attention = custom_dependency_items(project_path) + custom_namespace_items(project_path)
+    dependencies = project_dependencies(project_path)
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines = [
-        "# UiPath Migration Analysis Report",
+        "# Windows - Legacy to Windows Migration Risk Report",
         "",
         "## Executive Summary",
         "",
-        f"- Migration readiness: **{status}**",
-        f"- Approval recommendation: {approval_recommendation(status)}",
-        f"- Source target framework: `{project_target_framework(project_path)}`",
-        "- Target migration: `Windows`",
-        f"- Analyzer exit code: `{analyze_exit_code}`",
-        f"- Blocking issues: `{len(blocking)}`",
-        f"- Activities/packages requiring attention: `{len(attention) + len(project_attention)}`",
-        f"- Automated changes detected: `{len(automated)}`",
+        f"- **Project:** `{project_name(project_path)}`",
+        f"- **Current compatibility:** `{project_target_framework(project_path)}`",
+        "- **Target compatibility:** Windows",
+        f"- **Overall migration status:** {status}",
+        f"- **Primary blockers:** {len(blocking_risks)}",
+        f"- **High-risk items:** {len(high_risks)}",
+        f"- **Medium-risk items:** {len(medium_risks)}",
+        f"- **Automated changes detected:** {len(automated)}",
+        f"- **Recommended migration path:** {recommended_migration_path(risks)}",
         "",
-        "## Analysis Context",
-        "",
-        f"- Generated UTC: {datetime.now(timezone.utc).isoformat()}",
-        f"- Project path: `{project_path}`",
-        f"- Planned output path: `{output_path or str(project_path) + '_Upgraded'}`",
-        f"- Workflow Migrator CLI: `{cli}`",
-        f"- SARIF source: `{sarif_path}`" if sarif_path else "- SARIF source: not found",
-        "",
-        "## Migration Risks and Limitations",
-        "",
-        "- The analyzer can identify package, parsing, validation, and supported migration findings, but it cannot prove runtime business equivalence.",
-        "- Selectors, credentials, Orchestrator assets, queues, connection names, file paths, and external service behavior must be validated after upgrade.",
-        "- Custom and third-party activity packages require special review because Windows compatibility depends on the package implementation and available feeds.",
-        "- Mail, Office 365, UI Automation, PDF, Excel, and external application behavior should be tested with representative non-production data.",
-        "- A clean analysis report does not replace opening/building the migrated project in Studio and running targeted workflow tests.",
-        "",
-        "## Blocking Issues",
+        "## Pre-Flight Status",
         "",
     ]
 
-    if blocking:
+    add_table(
+        lines,
+        ["Check", "Result", "Evidence"],
+        [
+            ["Project path exists", "Yes", str(project_path)],
+            ["Analysis-only workflow used", "Yes", "The helper ran `analyze`; `upgrade` remains blocked by the migration gate until explicit approval."],
+            ["Original project write migration performed", "No", "No `upgrade` command is run during the analysis phase."],
+            ["Planned output path recorded", "Yes", str(output_path or default_output_path(project_path))],
+        ],
+    )
+
+    lines.extend(["", "## Validation Evidence", ""])
+    evidence_rows = [
+        [
+            "Workflow Migrator analysis",
+            "Pass" if analyze_exit_code == 0 else "Fail",
+            f"`analyze` exit code `{analyze_exit_code}`; SARIF `{sarif_path}`" if sarif_path else f"`analyze` exit code `{analyze_exit_code}`; SARIF not found",
+        ]
+    ]
+    if deep_analyze_exit_code is not None:
+        evidence_rows.append(
+            [
+                "Workflow Migrator analysis with missing dependencies ignored",
+                "Pass" if deep_analyze_exit_code == 0 else "Fail",
+                f"`analyze --ignore-missing-dependencies` exit code `{deep_analyze_exit_code}`; SARIF `{deep_sarif_path}`"
+                if deep_sarif_path
+                else f"`analyze --ignore-missing-dependencies` exit code `{deep_analyze_exit_code}`; SARIF not found",
+            ]
+        )
+    else:
+        evidence_rows.append(
+            [
+                "Workflow Migrator analysis with missing dependencies ignored",
+                "Not run",
+                "No restore blocker was detected, or the option was already provided by the caller.",
+            ]
+        )
+    evidence_rows.extend(
+        [
+            [
+                "Dependencies reviewed",
+                "Yes" if dependencies else "No",
+                ", ".join(f"{name} {version}" for name, version in sorted(dependencies.items())) or "No project.json dependencies parsed.",
+            ],
+            [
+                "Custom packages/namespaces reviewed",
+                "Yes" if project_attention else "No custom packages or namespaces found",
+                format_examples([f"{item['item']}" for item in project_attention]),
+            ],
+        ]
+    )
+    add_table(lines, ["Check", "Result", "Evidence"], evidence_rows)
+
+    lines.extend(
+        [
+            "",
+            "## Migration Risks and Limitations",
+            "",
+            "- Analyzer findings are combined with project and XAML inspection so the report calls out likely runtime risks, not only SARIF rule counts.",
+            "- The assessment cannot prove runtime business equivalence; selectors, credentials, Orchestrator assets, queues, connection names, file paths, and external services still require validation.",
+            "- Custom and third-party activity packages require owner review because Windows compatibility depends on package implementation and available feeds.",
+            "- GSuite, Microsoft 365, SMTP, UI Automation, image/OCR, PDF, Excel, SOAP, and hardcoded configuration patterns require targeted post-migration testing.",
+            "- A clean analysis report does not replace opening/building the migrated project in Studio and running representative workflow tests.",
+            "",
+            "## Migration Risks",
+            "",
+        ]
+    )
+
+    if risks:
         add_table(
             lines,
-            ["Rule", "Location", "Issue", "Required action"],
+            [
+                "ID",
+                "Severity",
+                "Location",
+                "Problematic component",
+                "Evidence",
+                "Failure mode",
+                "Recommended replacement",
+                "Resolution steps",
+                "Owner",
+                "Automation eligibility",
+                "Validation",
+            ],
             [
                 [
-                    item["rule_id"],
-                    item["location"] or "-",
-                    item["plain_language"],
-                    item["required_action"],
+                    risk["id"],
+                    risk["severity"],
+                    risk["location"],
+                    risk["component"],
+                    risk["evidence"],
+                    risk["failure_mode"],
+                    risk["replacement"],
+                    risk["resolution"],
+                    risk["owner"],
+                    risk["automation"],
+                    risk["validation"],
                 ]
-                for item in blocking
+                for risk in risks
             ],
         )
     else:
-        lines.append("- None found.")
+        lines.append("- No known migration risk patterns were found beyond normal validation requirements.")
 
-    lines.extend(["", "## Activities and Packages Requiring Attention", ""])
+    lines.extend(["", "## Blockers", ""])
 
-    attention_rows = [
-        [
-            item["rule_id"],
-            item["location"] or "-",
-            item["severity"],
-            item["plain_language"],
-            item["required_action"],
-        ]
-        for item in attention
-    ]
-    attention_rows.extend(
-        [
-            [item["area"], item["item"], item["risk"], item["impact"], item["action"]]
-            for item in project_attention
-        ]
-    )
-    if attention_rows:
-        add_table(lines, ["Area", "Item", "Risk", "Impact", "Required action"], attention_rows)
+    if blocking_risks:
+        for risk in blocking_risks:
+            lines.extend(
+                [
+                    f"### {risk['id']} - {risk['component']}",
+                    "",
+                    f"- **Where:** {risk['location']}",
+                    f"- **Evidence:** {risk['evidence']}",
+                    f"- **Why it blocks migration:** {risk['failure_mode']}",
+                    f"- **Replacement:** {risk['replacement']}",
+                    f"- **Fix steps:** {risk['resolution']}",
+                    f"- **Owner:** {risk['owner']}",
+                    f"- **Can be automated:** {risk['automation']}",
+                    f"- **Validation:** {risk['validation']}",
+                    "",
+                ]
+            )
     else:
         lines.append("- None found.")
 
@@ -581,32 +1132,65 @@ def write_analysis_report(
     else:
         lines.append("- None found.")
 
-    lines.extend(["", "## Required User Actions", ""])
-    required_actions: list[str] = []
-    for item in blocking + attention:
-        action = item["required_action"]
-        if action not in required_actions:
-            required_actions.append(action)
-    for item in project_attention:
-        action = item["action"]
-        if action not in required_actions:
-            required_actions.append(action)
+    lines.extend(["", "## Resolution Order", ""])
+    resolution_rows = [
+        ["1", "Preserve backup/source-control checkpoint and work on a copy", "All", "Coding Agent", "Backup/copy recorded before upgrade"],
+        ["2", "Resolve dependency/feed/library blockers", format_examples([risk["id"] for risk in risks if "package" in risk["component"].lower() or "activity types" in risk["component"].lower()]), "Client Owner + Human + Coding Agent", "Restore and type-resolution findings are clean"],
+        ["3", "Fix deterministic compile or migration blockers before upgrade", format_examples([risk["id"] for risk in blocking_risks if "array" in risk["component"].lower() or "saveimage" in risk["component"].lower()]), "Coding Agent", "No known expression or migration-not-implemented blocker remains"],
+        ["4", "Prepare connection/configuration strategy", format_examples([risk["id"] for risk in risks if "connection" in risk["component"].lower() or "smtp" in risk["component"].lower() or "hardcoded" in risk["component"].lower()]), "Client Owner + Human + Coding Agent", "Connection IDs, relay decisions, and config/assets are documented"],
+        ["5", "Run Workflow Migrator pilot on a copy after approval", "All", "Workflow Migrator", "SARIF reviewed and no blockers remain"],
+        ["6", "Fix converted validation/build issues", "All", "Coding Agent", "Windows project validates/builds"],
+        ["7", "Validate UI scopes, selectors, connections, and business outcomes", "All", "Human + Coding Agent", "Representative smoke/regression tests pass"],
+    ]
+    add_table(lines, ["Order", "Action", "Risk IDs", "Owner", "Exit criteria"], resolution_rows)
 
-    if required_actions:
-        lines.extend(f"- {action}" for action in required_actions)
-    else:
-        lines.append("- Review the automated changes and run normal post-upgrade validation.")
-
-    lines.extend(["", "## Approval Recommendation", "", approval_recommendation(status), ""])
-    lines.extend(["", "## Finding Counts", ""])
+    lines.extend(
+        [
+            "",
+            "## Final Recommendation",
+            "",
+            approval_recommendation(status),
+            recommended_migration_path(risks),
+            "",
+            "## Official Guidance Used",
+            "",
+            "- UiPath Windows - Legacy compatibility guidance recommends inventorying projects, libraries, and dependencies; migrating libraries first; piloting conversion; validating external systems; and addressing known expression compatibility issues such as `{}` to `new Object() {}`.",
+            "- UiPath Workflow Migrator guidance recommends running `analyze` before `upgrade`, reviewing SARIF from the `.upgrade` folder, using `--config=<connection.json>` for productivity activity `ConnectionId` values, and validating generated UI Automation application scopes.",
+            "- UiPath Workflow Migrator guidance documents supported and unsupported UI Automation and Mail activity migrations; supported migrations can still require runtime validation.",
+            "",
+            "## Finding Counts",
+            "",
+        ]
+    )
 
     if counts:
         for level in ["error", "warning", "note", "none"]:
-            lines.append(f"- {level}: {counts.get(level, 0)}")
+            lines.append(f"- primary {level}: {counts.get(level, 0)}")
     else:
-        lines.append("- No SARIF findings were parsed.")
+        lines.append("- No primary SARIF findings were parsed.")
+    if deep_analyze_exit_code is not None:
+        if deep_counts:
+            for level in ["error", "warning", "note", "none"]:
+                lines.append(f"- ignore-missing-dependencies {level}: {deep_counts.get(level, 0)}")
+        else:
+            lines.append("- No ignore-missing-dependencies SARIF findings were parsed.")
 
-    lines.extend(["", "## Raw Analyzer Output", ""])
+    lines.extend(
+        [
+            "",
+            "## Analysis Context",
+            "",
+            f"- Generated UTC: {datetime.now(timezone.utc).isoformat()}",
+            f"- Project path: `{project_path}`",
+            f"- Planned output path: `{output_path or default_output_path(project_path)}`",
+            f"- Workflow Migrator CLI: `{cli}`",
+            f"- Primary SARIF source: `{sarif_path}`" if sarif_path else "- Primary SARIF source: not found",
+            f"- Ignore-missing-dependencies SARIF source: `{deep_sarif_path}`" if deep_sarif_path else "- Ignore-missing-dependencies SARIF source: not run or not found",
+            "",
+            "## Raw Analyzer Output",
+            "",
+        ]
+    )
 
     if classified:
         for item in classified:
@@ -806,6 +1390,24 @@ def consent_gated_workflow(args: argparse.Namespace, cli: Path) -> int:
     )
     sarif_path = find_latest_sarif(project_path)
     sarif = load_sarif(sarif_path)
+
+    deep_analyze_exit_code: int | None = None
+    deep_sarif_path: Path | None = None
+    deep_sarif: dict[str, Any] | None = None
+    if has_restore_blocker(sarif) and not has_cli_option(passthrough, "--ignore-missing-dependencies"):
+        deep_analyze_args = [*analyze_args, "--ignore-missing-dependencies"]
+        deep_analyze_exit_code = run_cli(
+            cli,
+            deep_analyze_args,
+            status_mode=args.status_mode,
+            poll_interval_seconds=args.poll_interval_seconds,
+            operation_name="migration analysis with missing dependencies ignored",
+        )
+        deep_sarif_path = find_latest_sarif(project_path)
+        if deep_sarif_path == sarif_path:
+            deep_sarif_path = None
+        deep_sarif = load_sarif(deep_sarif_path)
+
     report = write_analysis_report(
         report_path,
         project_path=project_path,
@@ -814,6 +1416,9 @@ def consent_gated_workflow(args: argparse.Namespace, cli: Path) -> int:
         analyze_exit_code=analyze_exit_code,
         sarif_path=sarif_path,
         sarif=sarif,
+        deep_analyze_exit_code=deep_analyze_exit_code,
+        deep_sarif_path=deep_sarif_path,
+        deep_sarif=deep_sarif,
     )
 
     print(f"Analysis report: {report}")
