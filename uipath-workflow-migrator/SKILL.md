@@ -1,6 +1,8 @@
 ---
 name: uipath-workflow-migrator
 description: UiPath Workflow Migrator for bundled UiPath.Upgrade.Cli Studio project migration. Use when an agent needs to analyze or migrate UiPath project.json/.xaml projects from Windows-Legacy/Legacy to Windows, convert supported Classic activities to Modern activities, run Workflow Migrator/UiPath.Upgrade.exe analyze or upgrade commands, generate migration reports, obtain explicit user consent before migration, configure migration extensions, inspect SARIF/HTML reports, use captured migration operations knowledge, reduce status polling, attempt post-migration remediation, or assess Windows to Cross-platform/Portable migration support.
+metadata:
+  version: "2026.07.09"
 ---
 
 # UiPath Workflow Migrator
@@ -84,7 +86,13 @@ python3 "$SKILL_DIR/scripts/run_uipath_upgrade_cli.py" \
 
 After an approved upgrade, the helper re-analyzes the output project, applies deterministic safe remediations, and writes `.upgrade/post-migration-remediation-report.md`. Continue with agent-driven fixes for remaining report findings instead of only suggesting next steps, but ask before touching the original source project or changing business logic.
 
-Migration analysis reports must be assessment-oriented and consistent across runs. The top of the report should summarize readiness, validation evidence, blockers, risk register, ownership, automation eligibility, remediation steps, validation expectations, automated changes, and final recommendation. Raw analyzer output belongs near the end of the report.
+Migration analysis reports must be assessment-oriented and consistent across runs. The top of the report should summarize readiness, validation evidence, blockers, risk register, ownership, automation eligibility, remediation steps, validation expectations, automated changes, and final recommendation. Raw analyzer output and the migration gate section are excluded from the Markdown report unless the user explicitly asks for them.
+
+If the user asks for raw analyzer details or the consent reminder inside the report, pass:
+
+```bash
+--include-raw-analyzer-output --include-migration-gate
+```
 
 When the first analysis is blocked by missing dependencies, the helper runs a second analysis with `--ignore-missing-dependencies` unless the caller already supplied that option. Treat this as a deeper discovery pass only: it can reveal additional migration issues, but it does not make missing dependencies safe to ignore for upgrade.
 

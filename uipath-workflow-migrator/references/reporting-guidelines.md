@@ -18,10 +18,10 @@ Every migration analysis report must be an assessment report, not a SARIF digest
 10. Official Guidance Used
 11. Finding Counts
 12. Analysis Context
-13. Raw Analyzer Output
-14. Migration Gate
+13. Raw Analyzer Output (only when explicitly requested)
+14. Migration Gate (only when explicitly requested)
 
-Keep raw analyzer and test-style log output near the end. The first sections must answer whether the user can approve the migration, what can break, who owns each issue, what can be automated, and how the outcome should be validated.
+Keep raw analyzer and test-style log output out of the default report. Include it near the end only when the user explicitly asks for raw analyzer details. Include the Migration Gate section only when the user explicitly asks for the consent reminder to appear inside the report. The first sections must answer whether the user can approve the migration, what can break, who owns each issue, what can be automated, and how the outcome should be validated.
 
 ## Readiness Values
 
@@ -46,4 +46,4 @@ Keep raw analyzer and test-style log output near the end. The first sections mus
 - Explain risk in plain language instead of only showing SARIF rule IDs.
 - Include owner, automation eligibility, resolution steps, and validation guidance for every risk row.
 - Always include the limitations section, even for clean migrations.
-- Always include the migration gate reminding the user that upgrade requires explicit approval.
+- Keep upgrade consent enforced by workflow behavior even when the Migration Gate section is omitted from the report.

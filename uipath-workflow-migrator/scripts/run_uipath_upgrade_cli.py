@@ -952,6 +952,8 @@ def write_analysis_report(
     deep_analyze_exit_code: int | None = None,
     deep_sarif_path: Path | None = None,
     deep_sarif: dict[str, Any] | None = None,
+    include_raw_analyzer_output: bool = False,
+    include_migration_gate: bool = False,
 ) -> Path:
     counts, findings = summarize_sarif(sarif)
     deep_counts, deep_findings = summarize_sarif(deep_sarif)
@@ -1186,31 +1188,32 @@ def write_analysis_report(
             f"- Workflow Migrator CLI: `{cli}`",
             f"- Primary SARIF source: `{sarif_path}`" if sarif_path else "- Primary SARIF source: not found",
             f"- Ignore-missing-dependencies SARIF source: `{deep_sarif_path}`" if deep_sarif_path else "- Ignore-missing-dependencies SARIF source: not run or not found",
-            "",
-            "## Raw Analyzer Output",
-            "",
         ]
     )
 
-    if classified:
-        for item in classified:
-            location = f" ({item['location']})" if item["location"] else ""
-            lines.append(
-                f"- [{item['level']}] `{item['rule_id']}`{location}: {item['message']}"
-            )
-    else:
-        lines.append("- No analyzer findings to list.")
+    if include_raw_analyzer_output:
+        lines.extend(["", "## Raw Analyzer Output", ""])
 
-    lines.extend(
-        [
-            "",
-            "## Migration Gate",
-            "",
-            "Do not run `upgrade` until the user has reviewed this report and explicitly approved migration.",
-            "After approval, rerun the helper with `--approve-migration`.",
-            "",
-        ]
-    )
+        if classified:
+            for item in classified:
+                location = f" ({item['location']})" if item["location"] else ""
+                lines.append(
+                    f"- [{item['level']}] `{item['rule_id']}`{location}: {item['message']}"
+                )
+        else:
+            lines.append("- No analyzer findings to list.")
+
+    if include_migration_gate:
+        lines.extend(
+            [
+                "",
+                "## Migration Gate",
+                "",
+                "Do not run `upgrade` until the user has reviewed this report and explicitly approved migration.",
+                "After approval, rerun the helper with `--approve-migration`.",
+                "",
+            ]
+        )
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return report_path
@@ -1419,6 +1422,8 @@ def consent_gated_workflow(args: argparse.Namespace, cli: Path) -> int:
         deep_analyze_exit_code=deep_analyze_exit_code,
         deep_sarif_path=deep_sarif_path,
         deep_sarif=deep_sarif,
+        include_raw_analyzer_output=args.include_raw_analyzer_output,
+        include_migration_gate=args.include_migration_gate,
     )
 
     print(f"Analysis report: {report}")
@@ -1468,6 +1473,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--project-path", help="UiPath project folder for --consent-gated.")
     parser.add_argument("--output-path", help="Planned output project folder for --consent-gated upgrade.")
     parser.add_argument("--report-path", help="Markdown report path. Defaults to <project>/.upgrade/migration-analysis-report.md.")
+    parser.add_argument(
+        "--include-raw-analyzer-output",
+        action="store_true",
+        help="Include the raw SARIF/analyzer finding list in the Markdown analysis report.",
+    )
+    parser.add_argument(
+        "--include-migration-gate",
+        action="store_true",
+        help="Include the consent reminder section in the Markdown analysis report.",
+    )
     parser.add_argument("--approve-migration", action="store_true", help="Allow the upgrade phase after analysis has completed.")
     parser.add_argument(
         "--status-mode",
