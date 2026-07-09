@@ -105,8 +105,9 @@ function Invoke-UpgradeCli {
     }
 
     if ($StatusMode -eq "wait") {
-        & $fileName @argumentList
-        return $LASTEXITCODE
+        & $fileName @argumentList | ForEach-Object { Write-Host $_ }
+        $exitCode = $LASTEXITCODE
+        return $exitCode
     }
 
     $process = Start-Process -FilePath $fileName -ArgumentList $argumentList -NoNewWindow -PassThru
@@ -116,7 +117,7 @@ function Invoke-UpgradeCli {
         $process.Refresh()
         if (-not $process.HasExited) {
             $elapsed = [int]((Get-Date) - $started).TotalSeconds
-            Write-Error "$OperationName still running after ${elapsed}s; next status check in ${PollIntervalSeconds}s." -ErrorAction Continue
+            Write-Host "$OperationName still running after ${elapsed}s; next status check in ${PollIntervalSeconds}s."
         }
     }
     return $process.ExitCode
@@ -229,11 +230,27 @@ function Add-MarkdownTable {
     param(
         [System.Collections.Generic.List[string]]$Lines,
         [string[]]$Headers,
-        [object[][]]$Rows
+        [object[]]$Rows
     )
     $Lines.Add("| " + ($Headers -join " | ") + " |")
     $Lines.Add("| " + (($Headers | ForEach-Object { "---" }) -join " | ") + " |")
-    foreach ($row in $Rows) {
+
+    $rowItems = @($Rows)
+    if ($rowItems.Count -eq 0) {
+        return
+    }
+
+    $normalizedRows = @()
+    if ($rowItems[0] -is [System.Array] -and -not ($rowItems[0] -is [string])) {
+        $normalizedRows = $rowItems
+    } else {
+        for ($index = 0; $index -lt $rowItems.Count; $index += $Headers.Count) {
+            $last = [Math]::Min($index + $Headers.Count - 1, $rowItems.Count - 1)
+            $normalizedRows += ,@($rowItems[$index..$last])
+        }
+    }
+
+    foreach ($row in $normalizedRows) {
         $Lines.Add("| " + (($row | ForEach-Object { Escape-Markdown ([string]$_) }) -join " | ") + " |")
     }
 }
@@ -308,23 +325,23 @@ function New-Risk {
 
 function Get-XamlMatches {
     param([string]$Project, [string[]]$Patterns, [int]$Limit = 25)
-    $matches = @()
+    $results = @()
     foreach ($file in Get-XamlFiles $Project) {
         $lines = Get-Content -LiteralPath $file.FullName -Encoding UTF8 -ErrorAction SilentlyContinue
         for ($index = 0; $index -lt $lines.Count; $index++) {
             foreach ($pattern in $Patterns) {
                 if ($lines[$index] -match $pattern) {
                     $snippet = (($lines[$index] -replace "\s+", " ").Trim())
-                    $matches += "$(Get-RelativeLocation $Project $file.FullName ($index + 1)) $snippet"
-                    if ($matches.Count -ge $Limit) {
-                        return $matches
+                    $results += "$(Get-RelativeLocation $Project $file.FullName ($index + 1)) $snippet"
+                    if ($results.Count -ge $Limit) {
+                        return $results
                     }
                     break
                 }
             }
         }
     }
-    return $matches
+    return $results
 }
 
 function Get-ActivityExamples {
@@ -646,52 +663,57 @@ function Run-ConsentGatedWorkflow {
         $passThrough = @($passThrough | Select-Object -Skip 1)
     }
 
-    $analyzeArgs = Build-AnalyzeArgs $project $passThrough
-    $analyzeExitCode = Invoke-UpgradeCli $CliPath $analyzeArgs "migration analysis"
-    $sarifPath = Get-LatestSarif $project
-    $sarif = Read-JsonFile $sarifPath
-    $findings = @(Get-SarifFindings $sarif)
+    Push-Location -LiteralPath $project
+    try {
+        $analyzeArgs = Build-AnalyzeArgs $project $passThrough
+        $analyzeExitCode = Invoke-UpgradeCli $CliPath $analyzeArgs "migration analysis"
+        $sarifPath = Get-LatestSarif $project
+        $sarif = Read-JsonFile $sarifPath
+        $findings = @(Get-SarifFindings $sarif)
 
-    $deepAnalyzeExitCode = $null
-    $deepSarifPath = $null
-    $deepSarif = $null
-    if ((Test-RestoreBlocker $findings) -and -not (Test-CliOption $passThrough @("--ignore-missing-dependencies"))) {
-        $deepArgs = @($analyzeArgs + "--ignore-missing-dependencies")
-        $deepAnalyzeExitCode = Invoke-UpgradeCli $CliPath $deepArgs "migration analysis with missing dependencies ignored"
-        $latestDeep = Get-LatestSarif $project
-        if ($latestDeep -ne $sarifPath) {
-            $deepSarifPath = $latestDeep
-            $deepSarif = Read-JsonFile $deepSarifPath
+        $deepAnalyzeExitCode = $null
+        $deepSarifPath = $null
+        $deepSarif = $null
+        if ((Test-RestoreBlocker $findings) -and -not (Test-CliOption $passThrough @("--ignore-missing-dependencies"))) {
+            $deepArgs = @($analyzeArgs + "--ignore-missing-dependencies")
+            $deepAnalyzeExitCode = Invoke-UpgradeCli $CliPath $deepArgs "migration analysis with missing dependencies ignored"
+            $latestDeep = Get-LatestSarif $project
+            if ($latestDeep -ne $sarifPath) {
+                $deepSarifPath = $latestDeep
+                $deepSarif = Read-JsonFile $deepSarifPath
+            }
         }
-    }
 
-    $writtenReport = Write-AnalysisReport $report $project $plannedOutput $CliPath $analyzeExitCode $sarifPath $sarif $deepAnalyzeExitCode $deepSarifPath $deepSarif
-    Write-Output "Analysis report: $writtenReport"
+        $writtenReport = Write-AnalysisReport $report $project $plannedOutput $CliPath $analyzeExitCode $sarifPath $sarif $deepAnalyzeExitCode $deepSarifPath $deepSarif
+        Write-Host "Analysis report: $writtenReport"
 
-    if ($analyzeExitCode -ne 0) {
-        Write-Error "Analyze failed. Review the report before attempting migration." -ErrorAction Continue
-        return $analyzeExitCode
-    }
+        if ($analyzeExitCode -ne 0) {
+            Write-Warning "Analyze failed. Review the report before attempting migration."
+            return $analyzeExitCode
+        }
 
-    if (-not $ApproveMigration) {
-        Write-Error "Migration paused for user consent. Review the report, then rerun with -ApproveMigration." -ErrorAction Continue
-        return $StopForConsentExitCode
-    }
+        if (-not $ApproveMigration) {
+            Write-Warning "Migration paused for user consent. Review the report, then rerun with -ApproveMigration."
+            return $StopForConsentExitCode
+        }
 
-    $upgradeArgs = @("upgrade", "--project-path", $project) + $passThrough
-    if ($OutputPath) {
-        $upgradeArgs += @("--output-path", $plannedOutput)
-    }
-    if ($CliVerbose -and -not (Test-CliOption $passThrough @("--verbose", "-v"))) {
-        $upgradeArgs += "--verbose"
-    }
-    $upgradeExitCode = Invoke-UpgradeCli $CliPath $upgradeArgs "migration upgrade"
+        $upgradeArgs = @("upgrade", "--project-path", $project) + $passThrough
+        if ($OutputPath) {
+            $upgradeArgs += @("--output-path", $plannedOutput)
+        }
+        if ($CliVerbose -and -not (Test-CliOption $passThrough @("--verbose", "-v"))) {
+            $upgradeArgs += "--verbose"
+        }
+        $upgradeExitCode = Invoke-UpgradeCli $CliPath $upgradeArgs "migration upgrade"
 
-    if (-not $SkipRemediation -and (Test-Path -LiteralPath $plannedOutput)) {
-        $postArgs = Build-AnalyzeArgs $plannedOutput $passThrough
-        [void](Invoke-UpgradeCli $CliPath $postArgs "post-upgrade analysis")
+        if (-not $SkipRemediation -and (Test-Path -LiteralPath $plannedOutput)) {
+            $postArgs = Build-AnalyzeArgs $plannedOutput $passThrough
+            [void](Invoke-UpgradeCli $CliPath $postArgs "post-upgrade analysis")
+        }
+        return $upgradeExitCode
+    } finally {
+        Pop-Location
     }
-    return $upgradeExitCode
 }
 
 if ($PollIntervalSeconds -lt 5) {
