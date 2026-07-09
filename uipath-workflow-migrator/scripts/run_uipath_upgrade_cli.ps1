@@ -60,10 +60,14 @@ function Resolve-Cli {
         }
     }
 
-    $nested = Get-ChildItem -LiteralPath $root -Recurse -File -Include $CliExeName, $CliDllName -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if ($nested) {
-        return $nested.FullName
+    # Use an explicit name filter; -Include with -LiteralPath can pass unrelated files.
+    foreach ($name in @($CliExeName, $CliDllName)) {
+        $nested = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq $name } |
+            Select-Object -First 1
+        if ($nested) {
+            return $nested.FullName
+        }
     }
 
     return $null
