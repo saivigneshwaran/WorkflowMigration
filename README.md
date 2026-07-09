@@ -12,6 +12,7 @@ Before installing the skill, make sure the Windows machine has:
 - Git, or another way to copy this repository onto the machine.
 - Access to the UiPath project folder that contains `project.json`.
 - The complete `uipath-workflow-migrator` folder, including `SKILL.md`, `references`, `scripts`, and `tools`.
+- Windows PowerShell. Python is optional because the skill includes both PowerShell and Python helper paths.
 
 ## How to Install the Skill
 
@@ -83,3 +84,38 @@ $uipath-workflow-migrator Convert project located in 'C:\Path\To\UiPathProject' 
 ```
 
 The skill analyzes the project first, generates a migration report, and asks for approval before running the upgrade.
+
+## Execution Paths
+
+Use the PowerShell helper on Windows when Python is not installed.
+
+```powershell
+$env:SKILL_DIR = "C:\Path\To\WorkflowMigration\uipath-workflow-migrator"
+
+powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgrade_cli.ps1" `
+  -ConsentGated `
+  -ProjectPath "C:\Path\To\UiPathProject" `
+  -OutputPath "C:\Path\To\UiPathProject_Upgraded" `
+  -CliVerbose
+```
+
+After reviewing the report and approving migration, rerun with `-ApproveMigration`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgrade_cli.ps1" `
+  -ConsentGated `
+  -ProjectPath "C:\Path\To\UiPathProject" `
+  -OutputPath "C:\Path\To\UiPathProject_Upgraded" `
+  -ApproveMigration `
+  -CliVerbose
+```
+
+If Python is installed and preferred, use the Python helper.
+
+```powershell
+python "$env:SKILL_DIR\scripts\run_uipath_upgrade_cli.py" `
+  --consent-gated `
+  --project-path "C:\Path\To\UiPathProject" `
+  --output-path "C:\Path\To\UiPathProject_Upgraded" `
+  --verbose
+```

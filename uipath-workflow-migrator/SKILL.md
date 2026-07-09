@@ -35,11 +35,23 @@ If the user explicitly provides a new migration knowledge source and asks to ref
 
 When invoking the bundled helper, set `SKILL_DIR` to the folder that contains this `SKILL.md`. In a repository checkout, use:
 
+```powershell
+$env:SKILL_DIR = "$PWD\uipath-workflow-migrator"
+```
+
+For bash-compatible shells, use:
+
 ```bash
 SKILL_DIR="$PWD/uipath-workflow-migrator"
 ```
 
 If the skill is installed into a Codex skills directory, use:
+
+```powershell
+$env:SKILL_DIR = "$env:USERPROFILE\.codex\skills\uipath-workflow-migrator"
+```
+
+For bash-compatible shells, use:
 
 ```bash
 SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/uipath-workflow-migrator"
@@ -57,41 +69,51 @@ That folder should contain the published `UiPath.Upgrade.exe` or `UiPath.Upgrade
 
 ## Migration Modes
 
-Use the consent-gated workflow for single-project migration. The first run analyzes the project, writes a Markdown report, and stops:
+Use the consent-gated workflow for single-project migration. On Windows, prefer the PowerShell helper so Python is not required on the target machine. The first run analyzes the project, writes a Markdown report, and stops:
 
-```bash
-python3 "$SKILL_DIR/scripts/run_uipath_upgrade_cli.py" \
-  --consent-gated \
-  --project-path /path/to/project \
-  --output-path /path/to/project_Upgraded \
-  --verbose
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgrade_cli.ps1" `
+  -ConsentGated `
+  -ProjectPath "C:\Path\To\Project" `
+  -OutputPath "C:\Path\To\Project_Upgraded" `
+  -CliVerbose
 ```
 
 The helper waits for the CLI process to finish by default. Do not add tight status polling around it. If the caller needs progress messages, use coarse polling:
 
-```bash
---status-mode poll --poll-interval-seconds 60
+```powershell
+-StatusMode poll -PollIntervalSeconds 60
 ```
 
-Present the generated report to the user. If the user approves, rerun with `--approve-migration`:
+Present the generated report to the user. If the user approves, rerun with `-ApproveMigration` for PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgrade_cli.ps1" `
+  -ConsentGated `
+  -ProjectPath "C:\Path\To\Project" `
+  -OutputPath "C:\Path\To\Project_Upgraded" `
+  -ApproveMigration `
+  -CliVerbose
+```
+
+If Python is available and preferred, use the equivalent Python helper. Add `--approve-migration` after report review and explicit user approval:
 
 ```bash
 python3 "$SKILL_DIR/scripts/run_uipath_upgrade_cli.py" \
   --consent-gated \
   --project-path /path/to/project \
   --output-path /path/to/project_Upgraded \
-  --approve-migration \
   --verbose
 ```
 
-After an approved upgrade, the helper re-analyzes the output project, applies deterministic safe remediations, and writes `.upgrade/post-migration-remediation-report.md`. Continue with agent-driven fixes for remaining report findings instead of only suggesting next steps, but ask before touching the original source project or changing business logic.
+After an approved upgrade, re-analyze the output project and continue with agent-driven fixes for remaining report findings instead of only suggesting next steps. The Python helper also applies deterministic safe remediations and writes `.upgrade/post-migration-remediation-report.md`; the PowerShell helper provides the no-Python Windows path and performs the post-upgrade analysis pass. Ask before touching the original source project or changing business logic.
 
 Migration analysis reports must be assessment-oriented and consistent across runs. The top of the report should summarize readiness, validation evidence, blockers, risk register, ownership, automation eligibility, remediation steps, validation expectations, automated changes, and final recommendation. Raw analyzer output and the migration gate section are excluded from the Markdown report unless the user explicitly asks for them.
 
 If the user asks for raw analyzer details or the consent reminder inside the report, pass:
 
-```bash
---include-raw-analyzer-output --include-migration-gate
+```powershell
+-IncludeRawAnalyzerOutput -IncludeMigrationGate
 ```
 
 When the first analysis is blocked by missing dependencies, the helper runs a second analysis with `--ignore-missing-dependencies` unless the caller already supplied that option. Treat this as a deeper discovery pass only: it can reveal additional migration issues, but it does not make missing dependencies safe to ignore for upgrade.
@@ -104,9 +126,8 @@ For Classic to Modern activity conversion, keep extensions enabled. To be explic
 
 For a repo/folder with multiple projects:
 
-```bash
-python3 "$SKILL_DIR/scripts/run_uipath_upgrade_cli.py" \
-  -- bulk --command analyze --path /path/to/repository --verbose
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgrade_cli.ps1" -- bulk --command analyze --path "C:\Path\To\Repository" --verbose
 ```
 
 Do not run `bulk --command upgrade` until the user has reviewed the bulk analysis report and explicitly approved the migration.
@@ -128,9 +149,8 @@ The CLI target is `net8.0-windows` and uses WPF/WindowsDesktop dependencies. Run
 
 The helper script locates the bundled CLI and fails clearly if it is missing:
 
-```bash
-python3 "$SKILL_DIR/scripts/run_uipath_upgrade_cli.py" \
-  --locate
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgrade_cli.ps1" -Locate
 ```
 
 ## Validation
