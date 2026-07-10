@@ -85,6 +85,8 @@ $uipath-workflow-migrator Convert project located in 'C:\Path\To\UiPathProject' 
 
 The skill analyzes the project first, generates a migration report, and asks for approval before running the upgrade.
 
+For a deeper explanation of the execution flow, reporting model, risk categories, and common questions, see [How the Workflow Migrator Skill Works](HOW_THE_SKILL_WORKS.md).
+
 ## Execution Paths
 
 Use the PowerShell helper on Windows when Python is not installed.
