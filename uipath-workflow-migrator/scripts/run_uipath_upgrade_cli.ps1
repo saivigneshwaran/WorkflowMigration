@@ -13,6 +13,7 @@ param(
     [string]$StatusMode = "wait",
     [double]$PollIntervalSeconds = 60,
     [switch]$SkipRemediation,
+    [string]$TargetStudioVersion,
     [switch]$CliVerbose,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$CliArgs = @()
@@ -83,6 +84,82 @@ function Test-CliOption {
         }
     }
     return $false
+}
+
+function Get-CliOptionValue {
+    param([string[]]$Args, [string[]]$Names)
+    for ($index = 0; $index -lt $Args.Count; $index++) {
+        $arg = $Args[$index]
+        foreach ($name in $Names) {
+            if ($arg -eq $name) {
+                if ($index + 1 -lt $Args.Count) {
+                    return $Args[$index + 1]
+                }
+                return "(provided without value)"
+            }
+            $prefix = $name + "="
+            if ($arg.StartsWith($prefix)) {
+                return $arg.Substring($prefix.Length)
+            }
+        }
+    }
+    return ""
+}
+
+function Get-StudioCompatibilityAction {
+    param([string]$Target)
+    $value = if ($Target) { $Target.Trim() } else { "" }
+    $normalized = $value.ToLowerInvariant()
+    if (-not $value) {
+        return "Target Studio version was not specified. Treat package versions as unverified until the migrated project is opened/analyzed in the Studio version that will own it."
+    }
+    if ($normalized.Contains("sts") -or $normalized.Contains("latest")) {
+        return "Latest STS no longer creates or edits Windows-Legacy source projects. Use the CLI/LTS-compatible conversion path for the legacy source, then open and validate the converted Windows project in the target STS Studio."
+    }
+    if ($normalized.StartsWith("2024.10") -or $normalized.StartsWith("24.10")) {
+        return "Validate the converted project in Studio 2024.10 and keep package versions available from the 2024.10-approved feeds/governance policy."
+    }
+    if ($normalized.StartsWith("2025.10") -or $normalized.StartsWith("25.10")) {
+        return "Validate the converted project in Studio 2025.10 and keep package versions available from the 2025.10-approved feeds/governance policy."
+    }
+    return "Validate the converted project in the named Studio release and pin or approve package versions through that environment's feeds/governance policy."
+}
+
+function Get-PackageVersionRows {
+    param([string]$Target, [string[]]$PassThroughArgs)
+    $outlookVersion = Get-CliOptionValue $PassThroughArgs @("--outlook-package-version")
+    $targetDisplay = if ($Target) { $Target.Trim() } else { "Not specified" }
+    $outlookDisplay = if ($outlookVersion) { "--outlook-package-version $outlookVersion" } else { "--outlook-package-version not supplied" }
+    return @(
+        @("Target Studio version", $targetDisplay, (Get-StudioCompatibilityAction $Target)),
+        @("General dependency version rule", "Studio/CLI package resolution through configured feeds", "If the same package version exists in configured package sources, keep it. If not, select the highest patch of the nearest available version; unresolved packages remain blockers."),
+        @("Workflow Migrator control", "Pipeline plus configured package feeds", "The helper records and reports package decisions; it does not choose arbitrary package versions outside the CLI, extensions, Studio package sources, Orchestrator feeds, and any caller-provided CLI options."),
+        @("Mail/Microsoft 365 package override", $outlookDisplay, "When supplied, the CLI uses this Microsoft Office 365 activities package version for supported mail migration. When omitted, the bundled CLI README documents default 3.1.21; confirm that version is approved for the target Studio release or pass an explicit compatible version."),
+        @("Compatibility validation", "Required before approval", "Open/build/analyze the migrated output in the target Studio version and verify each selected package restores from the same feeds the robot/developer will use.")
+    )
+}
+
+function Add-ActionGuidance {
+    param([System.Collections.Generic.List[string]]$Lines, [object[]]$Risks)
+    $Lines.Add("")
+    $Lines.Add("## How to Address Findings")
+    $Lines.Add("")
+    if ($Risks.Count -eq 0) {
+        $Lines.Add("- No specific remediation findings were detected. Still validate the migrated project in Studio and run representative workflow tests.")
+        return
+    }
+
+    foreach ($risk in $Risks) {
+        $Lines.Add("### $($risk.Id) - $($risk.Component)")
+        $Lines.Add("")
+        $Lines.Add("- **Primary owner:** $($risk.Owner)")
+        $Lines.Add("- **Coding agent can assist with:** $($risk.Automation)")
+        $Lines.Add("- **Human/client decision needed:** Confirm business behavior, package/feed ownership, credentials, environment values, selectors, or replacement strategy where the finding depends on external systems or business process knowledge.")
+        $Lines.Add("- **Fix approach:** $($risk.Resolution)")
+        $Lines.Add("- **Preferred replacement:** $($risk.Replacement)")
+        $Lines.Add("- **Validation:** $($risk.Validation)")
+        $Lines.Add("")
+    }
 }
 
 function Invoke-UpgradeCli {
@@ -387,52 +464,52 @@ function Get-AssessmentRisks {
             -Evidence (Format-Examples ($missingPackageFindings + $typeMissingFindings)) `
             -FailureMode "Dependency restore or type resolution can fail; converted workflows may contain unresolved activities." `
             -Replacement "Migrate and publish Windows-compatible libraries first, or replace unavailable custom activities with supported UI Automation, API, or coded workflow implementations." `
-            -Resolution "Confirm feeds and credentials, obtain source or package access, inspect target frameworks, republish Windows-compatible libraries, then rerun analysis." `
+            -Resolution "Identify the owning library/feed, confirm NuGet or Orchestrator credentials, obtain source/package access, check whether the package has a Windows-compatible build, republish or replace it, update feeds if needed, then rerun normal analysis and the ignore-missing-dependencies pass." `
             -Owner "Client Owner + Human + Coding Agent" `
-            -Automation "Partial: the coding agent can update references after feeds/source are available; humans must provide package ownership and runtime validation." `
+            -Automation "Partial: the coding agent can map namespaces to packages, update project references, and rerun validation after access is available; humans must provide package ownership, feed credentials, source access, and runtime validation." `
             -Validation "Restore succeeds; SARIF has no missing package/type findings; migrated project opens and validates in Studio."
     }
 
     $expressionExamples = @(Get-XamlMatches $Project @('=\s*[''"]\[\s*\{\s*\}\s*\][''"]', '>\s*\[\s*\{\s*\}\s*\]\s*<'))
     $expressionExamples += @($Findings | Where-Object { $_.Message -match "BC36914|BC36915|\{\}" } | ForEach-Object { "{0} ``{1}`` {2}" -f $_.Location, $_.RuleId, $_.Message })
     if ($expressionExamples.Count -gt 0) {
-        $risks += New-Risk -Severity "Blocker" -Location (Format-Examples $expressionExamples) -Component "Ambiguous VB array initializer {}" -Evidence (Format-Examples $expressionExamples) -FailureMode "Windows validation can fail because stricter type inference cannot infer the array element type." -Replacement "Use a typed initializer such as New Object() {} or explicit typed values matching the target property." -Resolution "Replace ambiguous initializers, then verify the receiving activity property and workflow validation." -Owner "Coding Agent" -Automation "High: the coding agent can apply deterministic expression fixes, with schema/property verification." -Validation "No BC36914/BC36915 or ST-PMG-002 equivalent findings; Windows validation/build passes."
+        $risks += New-Risk -Severity "Blocker" -Location (Format-Examples $expressionExamples) -Component "Ambiguous VB array initializer {}" -Evidence (Format-Examples $expressionExamples) -FailureMode "Windows validation can fail because stricter type inference cannot infer the array element type." -Replacement "Use a typed initializer such as New Object() {} or explicit typed values matching the target property." -Resolution "Replace [{}] with a typed initializer such as [New Object() {}] only when the target property accepts an object array; otherwise inspect the activity property and provide explicit typed values that match the expected row or argument shape." -Owner "Coding Agent" -Automation "High: the coding agent can locate and update deterministic expression patterns, then verify property type/schema and rerun validation." -Validation "No BC36914/BC36915 or ST-PMG-002 equivalent findings; Windows validation/build passes."
     }
 
     $saveImageExamples = @(Get-ActivityExamples $Project @("SaveImage"))
     $saveImageExamples += @($Findings | Where-Object { $_.Message -match "SaveImage|MigrationNotImplemented" } | ForEach-Object { "{0} ``{1}`` {2}" -f $_.Location, $_.RuleId, $_.Message })
     if ($saveImageExamples.Count -gt 0) {
-        $risks += New-Risk -Severity "Blocker" -Location (Format-Examples $saveImageExamples) -Component "Classic SaveImage activity" -Evidence (Format-Examples $saveImageExamples) -FailureMode "Workflow Migrator may not implement this conversion, leaving screenshot persistence unresolved." -Replacement "Windows-compatible screenshot/file persistence helper or supported image/file activities." -Resolution "Refactor the screenshot save step before upgrade or immediately after migration, preserving downstream upload/use behavior." -Owner "Coding Agent + Human" -Automation "Partial: agent can refactor deterministic file save logic; human must validate screenshot capture in the target robot session." -Validation "No migration-not-implemented finding; screenshot file is created and consumed successfully at runtime."
+        $risks += New-Risk -Severity "Blocker" -Location (Format-Examples $saveImageExamples) -Component "Classic SaveImage activity" -Evidence (Format-Examples $saveImageExamples) -FailureMode "Workflow Migrator may not implement this conversion, leaving screenshot persistence unresolved." -Replacement "Windows-compatible screenshot/file persistence helper or supported image/file activities." -Resolution "Replace the unsupported save step with a Windows-compatible helper that writes the captured image to the expected file path, preserve downstream upload/use activities, and validate file creation in the target robot session." -Owner "Coding Agent + Human" -Automation "Partial: agent can add or refactor deterministic file/image save logic; human must validate screenshot capture, permissions, and downstream upload/use behavior in the target robot session." -Validation "No migration-not-implemented finding; screenshot file is created and consumed successfully at runtime."
     }
 
     $classicUia = @(Get-ActivityExamples $Project @("AttachBrowser", "AttachWindow", "Check", "Click", "ClickText", "ElementExists", "FindElement", "GetAttribute", "GetFullText", "GetText", "GetValue", "GetVisibleText", "Highlight", "Hover", "OpenBrowser", "SelectItem", "SetText", "TakeScreenshot", "TypeInto", "UiElementExists"))
     if ($classicUia.Count -gt 0 -or ($dependencies | Where-Object { $_.Name -eq "UiPath.UIAutomation.Activities" })) {
-        $risks += New-Risk -Severity "High" -Location $(if ($classicUia.Count -gt 0) { Format-Examples $classicUia } else { "UiPath.UIAutomation.Activities dependency" }) -Component "Classic UI Automation activities" -Evidence (Format-Examples $classicUia) -FailureMode "Supported activities may migrate, but selectors, application scopes, null input element behavior, and runtime timing can change." -Replacement "Use modern UI Automation activities under stable Use Application/Browser scopes and Object Repository targets where appropriate." -Resolution "Run Workflow Migrator with UIA extension enabled, inspect generated scopes, recapture unstable selectors, and smoke-test representative application flows." -Owner "Workflow Migrator + Human + Coding Agent" -Automation "Partial: Workflow Migrator handles supported conversions; agent can organize obvious scopes; humans must validate UI behavior." -Validation "Post-migration annotations reviewed; selectors and application smoke tests pass."
+        $risks += New-Risk -Severity "High" -Location $(if ($classicUia.Count -gt 0) { Format-Examples $classicUia } else { "UiPath.UIAutomation.Activities dependency" }) -Component "Classic UI Automation activities" -Evidence (Format-Examples $classicUia) -FailureMode "Supported activities may migrate, but selectors, application scopes, null input element behavior, and runtime timing can change." -Replacement "Use modern UI Automation activities under stable Use Application/Browser scopes and Object Repository targets where appropriate." -Resolution "Run Workflow Migrator with the UIA extension enabled, inspect each generated Use Application/Browser scope and annotations, recapture unstable selectors, replace fragile classic patterns where needed, and smoke-test representative application flows." -Owner "Workflow Migrator + Human + Coding Agent" -Automation "Partial: Workflow Migrator handles supported conversions; agent can inspect generated scopes and repair obvious selector/scope structure; humans must validate UI behavior against the real applications." -Validation "Post-migration annotations reviewed; selectors and application smoke tests pass."
     }
 
     $imageUia = @(Get-ActivityExamples $Project @("ClickImage", "ClickOCRText", "FindImage", "ImageExists", "WaitImageAppear", "WaitImageVanish"))
     if ($imageUia.Count -gt 0) {
-        $risks += New-Risk -Severity "High" -Location (Format-Examples $imageUia) -Component "Image/OCR-based UI Automation" -Evidence (Format-Examples $imageUia) -FailureMode "Image and OCR actions are sensitive to resolution, themes, OCR engine scope, and generated modern application scopes." -Replacement "Prefer selector-based modern UIA activities; keep OCR/image only where no stable selector exists." -Resolution "Review each image/OCR activity, replace with selector-based actions when possible, and validate screen resolution/OCR behavior." -Owner "Coding Agent + Human" -Automation "Partial: agent can identify and replace obvious cases; human must validate against the real application UI." -Validation "No unexpected image/OCR migration warnings; target UI flow passes at runtime."
+        $risks += New-Risk -Severity "High" -Location (Format-Examples $imageUia) -Component "Image/OCR-based UI Automation" -Evidence (Format-Examples $imageUia) -FailureMode "Image and OCR actions are sensitive to resolution, themes, OCR engine scope, and generated modern application scopes." -Replacement "Prefer selector-based modern UIA activities; keep OCR/image only where no stable selector exists." -Resolution "Review each image/OCR activity, determine whether a stable selector or accessible attribute exists, replace with selector-based modern UIA where possible, and validate remaining image/OCR steps under the target resolution/theme/OCR engine." -Owner "Coding Agent + Human" -Automation "Partial: agent can identify and replace obvious cases; human must validate against the real application UI." -Validation "No unexpected image/OCR migration warnings; target UI flow passes at runtime."
     }
 
     $productivity = @(Get-XamlMatches $Project @("GSuite|Google|Office365|Microsoft365", "UseConnectionService|ConnectionId|ServiceAccount|KeyPath"))
     if ($productivity.Count -gt 0 -or ($dependencies | Where-Object { $_.Name -in @("UiPath.GSuite.Activities", "UiPath.MicrosoftOffice365.Activities") })) {
-        $risks += New-Risk -Severity "High" -Location $(if ($productivity.Count -gt 0) { Format-Examples $productivity } else { "Productivity activity dependency" }) -Component "GSuite/Microsoft 365 productivity connections" -Evidence (Format-Examples $productivity) -FailureMode "Migrated productivity activities may require Orchestrator connection IDs; local service-account keys and legacy auth can fail in the target environment." -Replacement "Provision Orchestrator connections and pass Workflow Migrator a --config=<connection.json> mapping for required ConnectionId values." -Resolution "Inventory every productivity scope/activity, create connection IDs, prepare config JSON, and remove or secure local key-file references." -Owner "Client Owner + Human + Coding Agent" -Automation "Partial: agent can generate config templates and update references; client/human must provision connections and validate permissions." -Validation "Migrated project uses expected ConnectionId values; read/write/upload/send operations pass with non-production data."
+        $risks += New-Risk -Severity "High" -Location $(if ($productivity.Count -gt 0) { Format-Examples $productivity } else { "Productivity activity dependency" }) -Component "GSuite/Microsoft 365 productivity connections" -Evidence (Format-Examples $productivity) -FailureMode "Migrated productivity activities may require Orchestrator connection IDs; local service-account keys and legacy auth can fail in the target environment." -Replacement "Provision Orchestrator connections and pass Workflow Migrator a --config=<connection.json> mapping for required ConnectionId values." -Resolution "Inventory every GSuite/Microsoft 365 scope/activity, provision the required Integration Service or Orchestrator connection IDs, prepare the CLI connection config JSON, remove or secure local key-file references, and test read/write/upload/send operations." -Owner "Client Owner + Human + Coding Agent" -Automation "Partial: agent can generate config templates and update references; client/human must provision connections and validate permissions." -Validation "Migrated project uses expected ConnectionId values; read/write/upload/send operations pass with non-production data."
     }
 
     $smtp = @(Get-XamlMatches $Project @("SMTP|SendSMTP|Smtp", '\b(Server|Port|From)=[''"]'))
     if ($smtp.Count -gt 0 -or ($dependencies | Where-Object { $_.Name -eq "UiPath.Mail.Activities" })) {
-        $risks += New-Risk -Severity "Medium" -Location $(if ($smtp.Count -gt 0) { Format-Examples $smtp } else { "UiPath.Mail.Activities dependency" }) -Component "SMTP/Mail activities and hardcoded mail settings" -Evidence (Format-Examples $smtp) -FailureMode "Notifications can fail if relay, sender, authentication, package behavior, or network access changes in Windows runtime." -Replacement "Use Microsoft 365 connection activities when appropriate, or externalize SMTP relay settings into assets/configuration." -Resolution "Decide SMTP versus M365, provision the connection or relay, move hardcoded server/sender/port values to config/assets, and send test notifications." -Owner "Client Owner + Coding Agent" -Automation "Partial: agent can refactor hardcoded values; client/human must approve relay/M365 connection strategy." -Validation "Success and failure notification smoke tests pass from the target robot environment."
+        $risks += New-Risk -Severity "Medium" -Location $(if ($smtp.Count -gt 0) { Format-Examples $smtp } else { "UiPath.Mail.Activities dependency" }) -Component "SMTP/Mail activities and hardcoded mail settings" -Evidence (Format-Examples $smtp) -FailureMode "Notifications can fail if relay, sender, authentication, package behavior, or network access changes in Windows runtime." -Replacement "Use Microsoft 365 connection activities when appropriate, or externalize SMTP relay settings into assets/configuration." -Resolution "Decide whether the target runtime should use SMTP relay or Microsoft 365 connection activities, provision the approved relay/connection, move server/sender/port/recipient values to config or assets, and send success/failure test notifications." -Owner "Client Owner + Coding Agent" -Automation "Partial: agent can refactor hardcoded values; client/human must approve relay/M365 connection strategy." -Validation "Success and failure notification smoke tests pass from the target robot environment."
     }
 
     $hardcoded = @(Get-XamlMatches $Project @("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", '[A-Za-z]:\\[^''"]+', 'https?://[^''">\s]+', '\b(Server|Host|UserEmail|KeyPath|FolderId|FileId)=[''"][^''"]+[''"]') 20)
     if ($hardcoded.Count -gt 0) {
-        $risks += New-Risk -Severity "Medium" -Location (Format-Examples $hardcoded) -Component "Hardcoded configuration values" -Evidence (Format-Examples $hardcoded) -FailureMode "Environment-specific paths, URLs, email addresses, IDs, or key paths may break after migration or expose secrets/configuration in source." -Replacement "Use Orchestrator assets, Config.xlsx, environment-specific settings, or secure credential stores." -Resolution "Classify each hardcoded value, externalize environment-specific settings, and mask or rotate sensitive values where needed." -Owner "Coding Agent + Human" -Automation "Partial: agent can identify and externalize obvious constants; human/client must confirm correct target values." -Validation "No target-environment constants remain in source; migrated run uses approved assets/configuration."
+        $risks += New-Risk -Severity "Medium" -Location (Format-Examples $hardcoded) -Component "Hardcoded configuration values" -Evidence (Format-Examples $hardcoded) -FailureMode "Environment-specific paths, URLs, email addresses, IDs, or key paths may break after migration or expose secrets/configuration in source." -Replacement "Use Orchestrator assets, Config.xlsx, environment-specific settings, or secure credential stores." -Resolution "Classify each hardcoded value as environment configuration, identifier, path, endpoint, or secret; externalize it to Config.xlsx, Orchestrator assets, or credential storage; mask/rotate sensitive values where needed; then run with target-environment values." -Owner "Coding Agent + Human" -Automation "Partial: agent can identify and externalize obvious constants; human/client must confirm correct target values." -Validation "No target-environment constants remain in source; migrated run uses approved assets/configuration."
     }
 
     $soap = @(Get-XamlMatches $Project @("SOAP|WebService|ServiceReference"))
     if ($soap.Count -gt 0) {
-        $risks += New-Risk -Severity "High" -Location (Format-Examples $soap) -Component "SOAP/web service integration" -Evidence (Format-Examples $soap) -FailureMode "SOAP web services are not supported in Windows and cross-platform projects." -Replacement "Replace with HTTP/REST calls, supported libraries, or a coded workflow/client compatible with the target runtime." -Resolution "Inventory service calls, confirm available replacement API/client, then refactor before or after pilot migration." -Owner "Client Owner + Coding Agent" -Automation "Partial: agent can refactor once API contract is known; client/human must provide service contract and test access." -Validation "Replacement service calls pass integration tests in the target environment."
+        $risks += New-Risk -Severity "High" -Location (Format-Examples $soap) -Component "SOAP/web service integration" -Evidence (Format-Examples $soap) -FailureMode "SOAP web services are not supported in Windows and cross-platform projects." -Replacement "Replace with HTTP/REST calls, supported libraries, or a coded workflow/client compatible with the target runtime." -Resolution "Inventory each SOAP/service-reference call, obtain the service contract and test endpoint, choose a supported REST/HTTP/client-library or coded workflow replacement, refactor the call, and run integration tests before production migration." -Owner "Client Owner + Coding Agent" -Automation "Partial: agent can refactor once API contract is known; client/human must provide service contract and test access." -Validation "Replacement service calls pass integration tests in the target environment."
     }
 
     for ($i = 0; $i -lt $risks.Count; $i++) {
@@ -477,7 +554,8 @@ function Write-AnalysisReport {
         [object]$Sarif,
         [Nullable[int]]$DeepAnalyzeExitCode,
         [string]$DeepSarifPath,
-        [object]$DeepSarif
+        [object]$DeepSarif,
+        [string[]]$PassThroughArgs = @()
     )
 
     $findings = @(Get-SarifFindings $Sarif)
@@ -499,6 +577,7 @@ function Write-AnalysisReport {
     $lines.Add(("- **Project:** ``{0}``" -f (Get-ProjectName $Project)))
     $lines.Add(("- **Current compatibility:** ``{0}``" -f (Get-ProjectTargetFramework $Project)))
     $lines.Add("- **Target compatibility:** Windows")
+    $lines.Add(("- **Target Studio version for validation:** ``{0}``" -f $(if ($TargetStudioVersion) { $TargetStudioVersion } else { "Not specified" })))
     $lines.Add("- **Overall migration status:** $status")
     $lines.Add("- **Primary blockers:** $($blocking.Count)")
     $lines.Add("- **High-risk items:** $($high.Count)")
@@ -525,6 +604,11 @@ function Write-AnalysisReport {
         @("Workflow Migrator analysis with missing dependencies ignored", $deepResult, $deepEvidence),
         @("Dependencies reviewed", $(if ($dependencies.Count -gt 0) { "Yes" } else { "No" }), $(if ($dependencies.Count -gt 0) { $dependencies -join ", " } else { "No project.json dependencies parsed." }))
     )
+
+    $lines.Add("")
+    $lines.Add("## Package Version Selection and Studio Compatibility")
+    $lines.Add("")
+    Add-MarkdownTable $lines @("Decision point", "Observed/selected value", "Guidance") (Get-PackageVersionRows $TargetStudioVersion $PassThroughArgs)
 
     $lines.Add("")
     $lines.Add("## Migration Risks and Limitations")
@@ -566,6 +650,8 @@ function Write-AnalysisReport {
         $lines.Add("- None found.")
     }
 
+    Add-ActionGuidance $lines $risks
+
     $lines.Add("")
     $lines.Add("## Automated Changes Detected")
     $lines.Add("")
@@ -578,9 +664,30 @@ function Write-AnalysisReport {
     }
 
     $lines.Add("")
+    $lines.Add("## Resolution Order")
+    $lines.Add("")
+    Add-MarkdownTable $lines @("Order", "Action", "Risk IDs", "Owner", "Exit criteria") @(
+        @("1", "Preserve backup/source-control checkpoint and work on a copy", "All", "Coding Agent", "Backup/copy recorded before upgrade"),
+        @("2", "Resolve dependency/feed/library blockers", (Format-Examples @($risks | Where-Object { $_.Component.ToLowerInvariant().Contains("package") -or $_.Component.ToLowerInvariant().Contains("activity types") } | ForEach-Object { $_.Id })), "Client Owner + Human + Coding Agent", "Restore and type-resolution findings are clean"),
+        @("3", "Fix deterministic compile or migration blockers before upgrade", (Format-Examples @($blocking | Where-Object { $_.Component.ToLowerInvariant().Contains("array") -or $_.Component.ToLowerInvariant().Contains("saveimage") } | ForEach-Object { $_.Id })), "Coding Agent", "No known expression or migration-not-implemented blocker remains"),
+        @("4", "Prepare connection/configuration strategy", (Format-Examples @($risks | Where-Object { $_.Component.ToLowerInvariant().Contains("connection") -or $_.Component.ToLowerInvariant().Contains("smtp") -or $_.Component.ToLowerInvariant().Contains("hardcoded") } | ForEach-Object { $_.Id })), "Client Owner + Human + Coding Agent", "Connection IDs, relay decisions, and config/assets are documented"),
+        @("5", "Run Workflow Migrator pilot on a copy after approval", "All", "Workflow Migrator", "SARIF reviewed and no blockers remain"),
+        @("6", "Fix converted validation/build issues", "All", "Coding Agent", "Windows project validates/builds"),
+        @("7", "Validate UI scopes, selectors, connections, and business outcomes", "All", "Human + Coding Agent", "Representative smoke/regression tests pass")
+    )
+
+    $lines.Add("")
     $lines.Add("## Final Recommendation")
     $lines.Add("")
     $lines.Add((Get-ApprovalRecommendation $status))
+
+    $lines.Add("")
+    $lines.Add("## Official Guidance Used")
+    $lines.Add("")
+    $lines.Add("- UiPath Windows - Legacy compatibility guidance recommends inventorying projects, libraries, and dependencies; migrating libraries first; piloting conversion; validating external systems; and addressing known expression compatibility issues such as {} to new Object() {}.")
+    $lines.Add("- UiPath Windows - Legacy dependency guidance states that conversion keeps the same package version when it exists in configured package sources, otherwise selects the highest patch of the nearest available version; unresolved dependencies remain migration blockers.")
+    $lines.Add("- UiPath latest STS guidance states that STS no longer supports creating or editing Windows-Legacy source projects; validate converted Windows projects in STS only after conversion through a compatible path.")
+    $lines.Add("- UiPath Workflow Migrator guidance recommends running analyze before upgrade, reviewing SARIF from the .upgrade folder, using --config=<connection.json> for productivity activity ConnectionId values, and validating generated UI Automation application scopes.")
 
     $lines.Add("")
     $lines.Add("## Finding Counts")
@@ -684,7 +791,7 @@ function Run-ConsentGatedWorkflow {
             }
         }
 
-        $writtenReport = Write-AnalysisReport $report $project $plannedOutput $CliPath $analyzeExitCode $sarifPath $sarif $deepAnalyzeExitCode $deepSarifPath $deepSarif
+        $writtenReport = Write-AnalysisReport $report $project $plannedOutput $CliPath $analyzeExitCode $sarifPath $sarif $deepAnalyzeExitCode $deepSarifPath $deepSarif $passThrough
         Write-Host "Analysis report: $writtenReport"
 
         if ($analyzeExitCode -ne 0) {

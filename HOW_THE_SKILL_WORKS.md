@@ -53,6 +53,7 @@ powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgr
   -ConsentGated `
   -ProjectPath "C:\Path\To\UiPathProject" `
   -OutputPath "C:\Path\To\UiPathProject_Upgraded" `
+  -TargetStudioVersion "2025.10" `
   -CliVerbose
 ```
 
@@ -65,6 +66,7 @@ powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgr
   -ConsentGated `
   -ProjectPath "C:\Path\To\UiPathProject" `
   -OutputPath "C:\Path\To\UiPathProject_Upgraded" `
+  -TargetStudioVersion "2025.10" `
   -ApproveMigration `
   -CliVerbose
 ```
@@ -97,6 +99,7 @@ The report is assessment-oriented, not just a raw analyzer log. It combines:
 The report focuses on:
 
 - overall migration status,
+- package-version and target Studio compatibility,
 - blockers,
 - high-risk areas,
 - medium-risk areas,
@@ -140,6 +143,36 @@ If the first analysis is blocked by missing packages, the helper runs a second d
 ```
 
 This second pass is only used to uncover deeper migration risks. It does not make missing dependencies safe to ignore for upgrade. Missing packages or unresolved custom libraries remain blockers until resolved.
+
+## How Package Versions Are Selected
+
+The skill does not choose arbitrary package versions on its own. Package selection is controlled by the UiPath Upgrade CLI, its migration extensions, configured package feeds, and any explicit CLI options.
+
+For general dependencies, UiPath guidance says conversion keeps the same package version when it exists in configured package sources. If that exact version is not available, the dependency is changed to the highest patch of the nearest available version. If no compatible version is available, the package remains a blocker.
+
+The helper accepts the Studio version that will validate the converted project:
+
+```powershell
+-TargetStudioVersion "2025.10"
+```
+
+For Python:
+
+```bash
+--target-studio-version "2025.10"
+```
+
+This value is included in the report so users know where compatibility must be validated. It does not override package resolution by itself.
+
+For supported Mail/Microsoft 365 migration, the bundled CLI exposes:
+
+```text
+--outlook-package-version
+```
+
+Use that option only when the target Studio environment requires a specific approved Microsoft Office 365 activities package version. Otherwise, validate the version selected by the CLI in the target Studio release.
+
+For latest STS, do not rely on STS to create or edit the original Windows-Legacy source project. Convert through a compatible path, then validate the converted Windows project in STS.
 
 ## What the Skill Can Automate
 

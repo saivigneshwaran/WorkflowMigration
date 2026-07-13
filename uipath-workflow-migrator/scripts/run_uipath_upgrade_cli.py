@@ -641,9 +641,9 @@ def build_assessment_risks(
                 component=format_examples(missing_dependencies) if missing_dependencies else "Package restore",
                 failure_mode="Dependency restore or type resolution can fail; converted workflows may contain unresolved activities.",
                 replacement="Migrate and publish Windows-compatible libraries first, or replace unavailable custom activities with supported UI Automation, API, or coded workflow implementations.",
-                resolution="Confirm NuGet/Orchestrator feeds and credentials, obtain source or package access, inspect target frameworks, republish Windows-compatible libraries, then rerun analysis.",
+                resolution="Identify the owning library/feed, confirm NuGet or Orchestrator credentials, obtain source/package access, check whether the package has a Windows-compatible build, republish or replace it, update feeds if needed, then rerun normal analysis and the ignore-missing-dependencies pass.",
                 owner="Client Owner + Human + Coding Agent",
-                automation="Partial: the coding agent can update references after feeds/source are available; humans must provide package ownership and runtime validation.",
+                automation="Partial: the coding agent can map namespaces to packages, update project references, and rerun validation after access is available; humans must provide package ownership, feed credentials, source access, and runtime validation.",
                 validation="Restore succeeds; SARIF has no missing package/type findings; migrated project opens and validates in Studio.",
                 evidence=format_examples(missing_package_examples + type_missing_examples),
             )
@@ -657,9 +657,9 @@ def build_assessment_risks(
                 component="Custom or unavailable activity types",
                 failure_mode="Workflows cannot compile until all activity classes can be resolved in Windows.",
                 replacement="Windows-compatible package version or redesigned workflow logic.",
-                resolution="Map each missing type to its package/library, restore or migrate that library, then rerun analyze.",
+                resolution="Map each missing class/namespace to a package or custom library, restore or migrate that library first, replace unavailable activity behavior with supported activities/API/coded workflow logic, then rerun analysis.",
                 owner="Client Owner + Human + Coding Agent",
-                automation="Partial: agent can map XAML namespaces and update references; human/client must provide package source or replacement decisions.",
+                automation="Partial: agent can inspect XAML namespaces, propose replacements, and update references; human/client must provide package source, API contracts, or replacement decisions.",
                 validation="No TYPE-MISSING findings; project validates/builds.",
                 evidence=format_examples(type_missing_examples),
             )
@@ -685,9 +685,9 @@ def build_assessment_risks(
                 component="Ambiguous VB array initializer `{}`",
                 failure_mode="Windows validation can fail because stricter type inference cannot infer the array element type.",
                 replacement="Use a typed initializer such as `New Object() {}` or explicit typed values matching the target property.",
-                resolution="Replace ambiguous initializers, then verify the receiving activity property and workflow validation.",
+                resolution="Replace `[{}]` with a typed initializer such as `[New Object() {}]` only when the target property accepts an object array; otherwise inspect the activity property and provide explicit typed values that match the expected row or argument shape.",
                 owner="Coding Agent",
-                automation="High: the coding agent can apply deterministic expression fixes, with schema/property verification.",
+                automation="High: the coding agent can locate and update deterministic expression patterns, then verify property type/schema and rerun validation.",
                 validation="No BC36914/BC36915 or ST-PMG-002 equivalent findings; Windows validation/build passes.",
                 evidence=format_examples(expression_examples),
             )
@@ -709,9 +709,9 @@ def build_assessment_risks(
                 component="Classic `SaveImage` activity",
                 failure_mode="Workflow Migrator may not implement this conversion, leaving screenshot persistence unresolved.",
                 replacement="Windows-compatible screenshot/file persistence helper or supported image/file activities.",
-                resolution="Refactor the screenshot save step before upgrade or immediately after migration, preserving downstream upload/use behavior.",
+                resolution="Replace the unsupported save step with a Windows-compatible helper that writes the captured image to the expected file path, preserve downstream upload/use activities, and validate file creation in the target robot session.",
                 owner="Coding Agent + Human",
-                automation="Partial: agent can refactor deterministic file save logic; human must validate screenshot capture in the target robot session.",
+                automation="Partial: agent can add or refactor deterministic file/image save logic; human must validate screenshot capture, permissions, and downstream upload/use behavior in the target robot session.",
                 validation="No migration-not-implemented finding; screenshot file is created and consumed successfully at runtime.",
                 evidence=format_examples(save_image_examples),
             )
@@ -748,9 +748,9 @@ def build_assessment_risks(
                 component="Classic UI Automation activities",
                 failure_mode="Supported activities may migrate, but selectors, application scopes, null input element behavior, and runtime timing can change.",
                 replacement="Use modern UI Automation activities under stable `Use Application/Browser` scopes and Object Repository targets where appropriate.",
-                resolution="Run Workflow Migrator with UIA extension enabled, inspect generated scopes, recapture unstable selectors, and smoke-test representative application flows.",
+                resolution="Run Workflow Migrator with the UIA extension enabled, inspect each generated `Use Application/Browser` scope and annotations, recapture unstable selectors, replace fragile classic patterns where needed, and smoke-test representative application flows.",
                 owner="Workflow Migrator + Human + Coding Agent",
-                automation="Partial: Workflow Migrator handles supported conversions; agent can organize obvious scopes; humans must validate UI behavior.",
+                automation="Partial: Workflow Migrator handles supported conversions; agent can inspect generated scopes and repair obvious selector/scope structure; humans must validate UI behavior against the real applications.",
                 validation="ST-AMG-001/post-migration annotations reviewed; selectors and application smoke tests pass.",
                 evidence=format_examples(classic_uia_examples),
             )
@@ -766,7 +766,7 @@ def build_assessment_risks(
                 component="Image/OCR-based UI Automation",
                 failure_mode="Image and OCR actions are sensitive to resolution, themes, OCR engine scope, and generated modern application scopes.",
                 replacement="Prefer selector-based modern UIA activities; keep OCR/image only where no stable selector exists.",
-                resolution="Review each image/OCR activity, replace with selector-based actions when possible, and validate screen resolution/OCR behavior.",
+                resolution="Review each image/OCR activity, determine whether a stable selector or accessible attribute exists, replace with selector-based modern UIA where possible, and validate remaining image/OCR steps under the target resolution/theme/OCR engine.",
                 owner="Coding Agent + Human",
                 automation="Partial: agent can identify and replace obvious cases; human must validate against the real application UI.",
                 validation="No unexpected image/OCR migration warnings; target UI flow passes at runtime.",
@@ -793,7 +793,7 @@ def build_assessment_risks(
                 component="GSuite/Microsoft 365 productivity connections",
                 failure_mode="Migrated productivity activities may require Orchestrator connection IDs; local service-account keys and legacy auth can fail in the target environment.",
                 replacement="Provision Orchestrator connections and pass Workflow Migrator a `--config=<connection.json>` mapping for required `ConnectionId` values.",
-                resolution="Inventory every productivity scope/activity, create connection IDs, prepare config JSON, and remove or secure local key-file references.",
+                resolution="Inventory every GSuite/Microsoft 365 scope/activity, provision the required Integration Service or Orchestrator connection IDs, prepare the CLI connection config JSON, remove or secure local key-file references, and test read/write/upload/send operations.",
                 owner="Client Owner + Human + Coding Agent",
                 automation="Partial: agent can generate config templates and update references; client/human must provision connections and validate permissions.",
                 validation="Migrated project uses expected ConnectionId values; read/write/upload/send operations pass with non-production data.",
@@ -816,7 +816,7 @@ def build_assessment_risks(
                 component="SMTP/Mail activities and hardcoded mail settings",
                 failure_mode="Notifications can fail if relay, sender, authentication, package behavior, or network access changes in Windows runtime.",
                 replacement="Use Microsoft 365 connection activities when appropriate, or externalize SMTP relay settings into assets/configuration.",
-                resolution="Decide SMTP versus M365, provision the connection or relay, move hardcoded server/sender/port values to config/assets, and send test notifications.",
+                resolution="Decide whether the target runtime should use SMTP relay or Microsoft 365 connection activities, provision the approved relay/connection, move server/sender/port/recipient values to config or assets, and send success/failure test notifications.",
                 owner="Client Owner + Coding Agent",
                 automation="Partial: agent can refactor hardcoded values; client/human must approve relay/M365 connection strategy.",
                 validation="Success and failure notification smoke tests pass from the target robot environment.",
@@ -842,7 +842,7 @@ def build_assessment_risks(
                 component="Hardcoded configuration values",
                 failure_mode="Environment-specific paths, URLs, email addresses, IDs, or key paths may break after migration or expose secrets/configuration in source.",
                 replacement="Use Orchestrator assets, Config.xlsx, environment-specific settings, or secure credential stores.",
-                resolution="Classify each hardcoded value, externalize environment-specific settings, and mask or rotate sensitive values where needed.",
+                resolution="Classify each hardcoded value as environment configuration, identifier, path, endpoint, or secret; externalize it to Config.xlsx, Orchestrator assets, or credential storage; mask/rotate sensitive values where needed; then run with target-environment values.",
                 owner="Coding Agent + Human",
                 automation="Partial: agent can identify and externalize obvious constants; human/client must confirm correct target values.",
                 validation="No target-environment constants remain in source; migrated run uses approved assets/configuration.",
@@ -859,7 +859,7 @@ def build_assessment_risks(
                 component="SOAP/web service integration",
                 failure_mode="SOAP web services are not supported in Windows and cross-platform projects.",
                 replacement="Replace with HTTP/REST calls, supported libraries, or a coded workflow/client compatible with the target runtime.",
-                resolution="Inventory service calls, confirm available replacement API/client, then refactor before or after pilot migration.",
+                resolution="Inventory each SOAP/service-reference call, obtain the service contract and test endpoint, choose a supported REST/HTTP/client-library or coded workflow replacement, refactor the call, and run integration tests before production migration.",
                 owner="Client Owner + Coding Agent",
                 automation="Partial: agent can refactor once API contract is known; client/human must provide service contract and test access.",
                 validation="Replacement service calls pass integration tests in the target environment.",
@@ -888,9 +888,9 @@ def risk_status(risks: list[dict[str, str]], fallback_status: str) -> str:
 
 def recommended_migration_path(risks: list[dict[str, str]]) -> str:
     if any(risk["severity"] == "Blocker" for risk in risks):
-        return "Resolve blockers first, then run an Workflow Migrator pilot on a project copy."
+        return "Resolve blockers first, then run a Workflow Migrator pilot on a project copy."
     if any("Classic UI Automation" in risk["component"] for risk in risks):
-        return "Run an Workflow Migrator pilot on a project copy, then validate selectors and generated application scopes."
+        return "Run a Workflow Migrator pilot on a project copy, then validate selectors and generated application scopes."
     return "Proceed with a consent-gated Workflow Migrator pilot on a project copy, followed by Studio validation."
 
 
@@ -920,6 +920,87 @@ def has_cli_option(args: list[str], *names: str) -> bool:
         if any(arg == name or arg.startswith(f"{name}=") for name in names):
             return True
     return False
+
+
+def cli_option_value(args: list[str], *names: str) -> str:
+    for index, arg in enumerate(args):
+        for name in names:
+            if arg == name:
+                return args[index + 1] if index + 1 < len(args) else "(provided without value)"
+            if arg.startswith(f"{name}="):
+                return arg.split("=", 1)[1]
+    return ""
+
+
+def studio_compatibility_action(target_studio_version: str | None) -> str:
+    target = (target_studio_version or "").strip()
+    normalized = target.lower()
+    if not target:
+        return "Target Studio version was not specified. Treat package versions as unverified until the migrated project is opened/analyzed in the Studio version that will own it."
+    if "sts" in normalized or "latest" in normalized:
+        return "Latest STS no longer creates or edits Windows-Legacy source projects. Use the CLI/LTS-compatible conversion path for the legacy source, then open and validate the converted Windows project in the target STS Studio."
+    if normalized.startswith("2024.10") or normalized.startswith("24.10"):
+        return "Validate the converted project in Studio 2024.10 and keep package versions available from the 2024.10-approved feeds/governance policy."
+    if normalized.startswith("2025.10") or normalized.startswith("25.10"):
+        return "Validate the converted project in Studio 2025.10 and keep package versions available from the 2025.10-approved feeds/governance policy."
+    return "Validate the converted project in the named Studio release and pin or approve package versions through that environment's feeds/governance policy."
+
+
+def package_version_rows(
+    *,
+    target_studio_version: str | None,
+    passthrough_args: list[str],
+) -> list[list[str]]:
+    outlook_version = cli_option_value(passthrough_args, "--outlook-package-version")
+    return [
+        [
+            "Target Studio version",
+            target_studio_version.strip() if target_studio_version else "Not specified",
+            studio_compatibility_action(target_studio_version),
+        ],
+        [
+            "General dependency version rule",
+            "Studio/CLI package resolution through configured feeds",
+            "If the same package version exists in configured package sources, keep it. If not, select the highest patch of the nearest available version; unresolved packages remain blockers.",
+        ],
+        [
+            "Workflow Migrator control",
+            "Pipeline plus configured package feeds",
+            "The helper records and reports package decisions; it does not choose arbitrary package versions outside the CLI, extensions, Studio package sources, Orchestrator feeds, and any caller-provided CLI options.",
+        ],
+        [
+            "Mail/Microsoft 365 package override",
+            f"`--outlook-package-version {outlook_version}`" if outlook_version else "`--outlook-package-version` not supplied",
+            "When supplied, the CLI uses this Microsoft Office 365 activities package version for supported mail migration. When omitted, the bundled CLI README documents default `3.1.21`; confirm that version is approved for the target Studio release or pass an explicit compatible version.",
+        ],
+        [
+            "Compatibility validation",
+            "Required before approval",
+            "Open/build/analyze the migrated output in the target Studio version and verify each selected package restores from the same feeds the robot/developer will use.",
+        ],
+    ]
+
+
+def add_action_guidance(lines: list[str], risks: list[dict[str, str]]) -> None:
+    lines.extend(["", "## How to Address Findings", ""])
+    if not risks:
+        lines.append("- No specific remediation findings were detected. Still validate the migrated project in Studio and run representative workflow tests.")
+        return
+
+    for risk in risks:
+        lines.extend(
+            [
+                f"### {risk['id']} - {risk['component']}",
+                "",
+                f"- **Primary owner:** {risk['owner']}",
+                f"- **Coding agent can assist with:** {risk['automation']}",
+                f"- **Human/client decision needed:** Confirm business behavior, package/feed ownership, credentials, environment values, selectors, or replacement strategy where the finding depends on external systems or business process knowledge.",
+                f"- **Fix approach:** {risk['resolution']}",
+                f"- **Preferred replacement:** {risk['replacement']}",
+                f"- **Validation:** {risk['validation']}",
+                "",
+            ]
+        )
 
 
 def build_analyze_args(project_path: Path, passthrough: list[str], verbose: bool) -> list[str]:
@@ -954,6 +1035,8 @@ def write_analysis_report(
     deep_sarif: dict[str, Any] | None = None,
     include_raw_analyzer_output: bool = False,
     include_migration_gate: bool = False,
+    target_studio_version: str | None = None,
+    passthrough_args: list[str] | None = None,
 ) -> Path:
     counts, findings = summarize_sarif(sarif)
     deep_counts, deep_findings = summarize_sarif(deep_sarif)
@@ -977,6 +1060,7 @@ def write_analysis_report(
         f"- **Project:** `{project_name(project_path)}`",
         f"- **Current compatibility:** `{project_target_framework(project_path)}`",
         "- **Target compatibility:** Windows",
+        f"- **Target Studio version for validation:** `{target_studio_version.strip() if target_studio_version else 'Not specified'}`",
         f"- **Overall migration status:** {status}",
         f"- **Primary blockers:** {len(blocking_risks)}",
         f"- **High-risk items:** {len(high_risks)}",
@@ -1040,6 +1124,16 @@ def write_analysis_report(
         ]
     )
     add_table(lines, ["Check", "Result", "Evidence"], evidence_rows)
+
+    lines.extend(["", "## Package Version Selection and Studio Compatibility", ""])
+    add_table(
+        lines,
+        ["Decision point", "Observed/selected value", "Guidance"],
+        package_version_rows(
+            target_studio_version=target_studio_version,
+            passthrough_args=passthrough_args or [],
+        ),
+    )
 
     lines.extend(
         [
@@ -1115,6 +1209,8 @@ def write_analysis_report(
     else:
         lines.append("- None found.")
 
+    add_action_guidance(lines, risks)
+
     lines.extend(["", "## Automated Changes Detected", ""])
 
     if automated:
@@ -1157,6 +1253,8 @@ def write_analysis_report(
             "## Official Guidance Used",
             "",
             "- UiPath Windows - Legacy compatibility guidance recommends inventorying projects, libraries, and dependencies; migrating libraries first; piloting conversion; validating external systems; and addressing known expression compatibility issues such as `{}` to `new Object() {}`.",
+            "- UiPath Windows - Legacy dependency guidance states that conversion keeps the same package version when it exists in configured package sources, otherwise selects the highest patch of the nearest available version; unresolved dependencies remain migration blockers.",
+            "- UiPath latest STS guidance states that STS no longer supports creating or editing Windows-Legacy source projects; validate converted Windows projects in STS only after conversion through a compatible path.",
             "- UiPath Workflow Migrator guidance recommends running `analyze` before `upgrade`, reviewing SARIF from the `.upgrade` folder, using `--config=<connection.json>` for productivity activity `ConnectionId` values, and validating generated UI Automation application scopes.",
             "- UiPath Workflow Migrator guidance documents supported and unsupported UI Automation and Mail activity migrations; supported migrations can still require runtime validation.",
             "",
@@ -1424,6 +1522,8 @@ def consent_gated_workflow(args: argparse.Namespace, cli: Path) -> int:
         deep_sarif=deep_sarif,
         include_raw_analyzer_output=args.include_raw_analyzer_output,
         include_migration_gate=args.include_migration_gate,
+        target_studio_version=args.target_studio_version,
+        passthrough_args=passthrough,
     )
 
     print(f"Analysis report: {report}")
@@ -1500,6 +1600,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--skip-remediation",
         action="store_true",
         help="Skip the automatic post-upgrade analyze/remediation pass.",
+    )
+    parser.add_argument(
+        "--target-studio-version",
+        help="Studio version that will open/validate the migrated Windows project, for example 2024.10, 2025.10, or latest STS.",
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Pass --verbose to analyze/upgrade in --consent-gated mode.")
     parser.add_argument("cli_args", nargs=argparse.REMAINDER, help="Arguments passed to UiPath.Upgrade.exe after --.")

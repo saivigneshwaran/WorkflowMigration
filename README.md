@@ -98,6 +98,7 @@ powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgr
   -ConsentGated `
   -ProjectPath "C:\Path\To\UiPathProject" `
   -OutputPath "C:\Path\To\UiPathProject_Upgraded" `
+  -TargetStudioVersion "2025.10" `
   -CliVerbose
 ```
 
@@ -108,6 +109,7 @@ powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgr
   -ConsentGated `
   -ProjectPath "C:\Path\To\UiPathProject" `
   -OutputPath "C:\Path\To\UiPathProject_Upgraded" `
+  -TargetStudioVersion "2025.10" `
   -ApproveMigration `
   -CliVerbose
 ```
@@ -119,5 +121,8 @@ python "$env:SKILL_DIR\scripts\run_uipath_upgrade_cli.py" `
   --consent-gated `
   --project-path "C:\Path\To\UiPathProject" `
   --output-path "C:\Path\To\UiPathProject_Upgraded" `
+  --target-studio-version "2025.10" `
   --verbose
 ```
+
+Use the Studio version that will open and validate the converted Windows project, such as `2024.10`, `2025.10`, or `latest STS`.

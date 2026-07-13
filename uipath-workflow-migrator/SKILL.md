@@ -23,7 +23,7 @@ Always use this order:
 
 Never run `upgrade`, `bulk --command upgrade`, or any migration that writes files until the user has reviewed the analysis report and explicitly approved proceeding.
 
-Read [references/uipath-upgrade-cli.md](references/uipath-upgrade-cli.md) when you need command options, source paths, extension names, runtime status behavior, or pipeline details. Read [references/reporting-guidelines.md](references/reporting-guidelines.md) before changing migration report structure or wording. Read [references/post-migration-remediation.md](references/post-migration-remediation.md) before applying nontrivial fixes after upgrade. Read [references/windows-to-cross-platform.md](references/windows-to-cross-platform.md) before promising or implementing Windows to Cross-platform migration.
+Read [references/uipath-upgrade-cli.md](references/uipath-upgrade-cli.md) when you need command options, source paths, extension names, runtime status behavior, or pipeline details. Read [references/reporting-guidelines.md](references/reporting-guidelines.md) before changing migration report structure or wording. Read [references/studio-version-package-compatibility.md](references/studio-version-package-compatibility.md) before explaining or changing package-version compatibility behavior. Read [references/post-migration-remediation.md](references/post-migration-remediation.md) before applying nontrivial fixes after upgrade. Read [references/windows-to-cross-platform.md](references/windows-to-cross-platform.md) before promising or implementing Windows to Cross-platform migration.
 
 ## Operational Knowledge
 
@@ -76,6 +76,7 @@ powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgr
   -ConsentGated `
   -ProjectPath "C:\Path\To\Project" `
   -OutputPath "C:\Path\To\Project_Upgraded" `
+  -TargetStudioVersion "2025.10" `
   -CliVerbose
 ```
 
@@ -92,6 +93,7 @@ powershell -ExecutionPolicy Bypass -File "$env:SKILL_DIR\scripts\run_uipath_upgr
   -ConsentGated `
   -ProjectPath "C:\Path\To\Project" `
   -OutputPath "C:\Path\To\Project_Upgraded" `
+  -TargetStudioVersion "2025.10" `
   -ApproveMigration `
   -CliVerbose
 ```
@@ -103,12 +105,15 @@ python3 "$SKILL_DIR/scripts/run_uipath_upgrade_cli.py" \
   --consent-gated \
   --project-path /path/to/project \
   --output-path /path/to/project_Upgraded \
+  --target-studio-version "2025.10" \
   --verbose
 ```
 
 After an approved upgrade, re-analyze the output project and continue with agent-driven fixes for remaining report findings instead of only suggesting next steps. The Python helper also applies deterministic safe remediations and writes `.upgrade/post-migration-remediation-report.md`; the PowerShell helper provides the no-Python Windows path and performs the post-upgrade analysis pass. Ask before touching the original source project or changing business logic.
 
-Migration analysis reports must be assessment-oriented and consistent across runs. The top of the report should summarize readiness, validation evidence, blockers, risk register, ownership, automation eligibility, remediation steps, validation expectations, automated changes, and final recommendation. Raw analyzer output and the migration gate section are excluded from the Markdown report unless the user explicitly asks for them.
+Migration analysis reports must be assessment-oriented and consistent across runs. The top of the report should summarize readiness, validation evidence, package-version/Studio compatibility, blockers, risk register, ownership, automation eligibility, remediation steps, validation expectations, automated changes, and final recommendation. Raw analyzer output and the migration gate section are excluded from the Markdown report unless the user explicitly asks for them.
+
+Ask for or infer the Studio version that will validate/open the converted project and pass it as `-TargetStudioVersion` or `--target-studio-version` when known. This value does not override dependency resolution by itself; it records the target validation environment. General package versions are selected by the Upgrade CLI, migration extensions, and configured package feeds according to UiPath dependency resolution guidance. For Mail/Microsoft 365 migration, pass `--outlook-package-version` only when an explicit approved package version is required for the target Studio environment.
 
 If the user asks for raw analyzer details or the consent reminder inside the report, pass:
 
