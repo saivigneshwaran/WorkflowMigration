@@ -23,7 +23,7 @@ Always use this order:
 
 Never run `upgrade`, `bulk --command upgrade`, or any migration that writes files until the user has reviewed the analysis report and explicitly approved proceeding.
 
-Read [references/uipath-upgrade-cli.md](references/uipath-upgrade-cli.md) when you need command options, source paths, extension names, runtime status behavior, or pipeline details. Read [references/reporting-guidelines.md](references/reporting-guidelines.md) before changing migration report structure or wording. Read [references/studio-version-package-compatibility.md](references/studio-version-package-compatibility.md) before explaining or changing package-version compatibility behavior. Read [references/post-migration-remediation.md](references/post-migration-remediation.md) before applying nontrivial fixes after upgrade. Read [references/windows-to-cross-platform.md](references/windows-to-cross-platform.md) before promising or implementing Windows to Cross-platform migration.
+Read [references/uipath-upgrade-cli.md](references/uipath-upgrade-cli.md) when you need command options, source paths, extension names, runtime status behavior, or pipeline details. Read [references/reporting-guidelines.md](references/reporting-guidelines.md) before changing migration report structure or wording. Read [references/studio-version-package-compatibility.md](references/studio-version-package-compatibility.md) before explaining or changing package-version compatibility behavior. Read [references/custom-activity-migration.md](references/custom-activity-migration.md) before assessing or assisting with custom activity package migration. Read [references/post-migration-remediation.md](references/post-migration-remediation.md) before applying nontrivial fixes after upgrade. Read [references/windows-to-cross-platform.md](references/windows-to-cross-platform.md) before promising or implementing Windows to Cross-platform migration.
 
 ## Operational Knowledge
 
@@ -123,6 +123,8 @@ If the user asks for raw analyzer details or the consent reminder inside the rep
 
 When the first analysis is blocked by missing dependencies, the helper runs a second analysis with `--ignore-missing-dependencies` unless the caller already supplied that option. Treat this as a deeper discovery pass only: it can reveal additional migration issues, but it does not make missing dependencies safe to ignore for upgrade.
 
+Custom activity package migration is a separate task from process migration. The normal Workflow Migrator run can detect custom packages, missing custom types, and affected workflows, but it does not automatically convert custom activity source code or republish custom NuGet packages. If a process depends on custom activities, migrate and publish a Windows-compatible custom activity package first, then rerun process analysis. If the user provides the custom activity source repository and asks for help migrating it, follow [references/custom-activity-migration.md](references/custom-activity-migration.md): inspect the package source, migrate the project to SDK-style `.csproj`, add the required .NET target such as `net6.0-windows`, keep the legacy target when needed, validate dependencies, build, pack, publish, and only then migrate the consuming process.
+
 For Classic to Modern activity conversion, keep extensions enabled. To be explicit, pass:
 
 ```bash
@@ -145,6 +147,7 @@ The checked source has these behaviors:
 
 - Legacy/Windows-Legacy to Windows is implemented by `ProjectFrameworkUpdaterStep`.
 - Classic activity migrations are extension-driven; the built-in extension names are `UiAutomationActivities`, `MailActivities`, and `MicrosoftActivitiesExtension`.
+- Custom activity package source migration is not implemented by the bundled process migration CLI. Treat custom package migration as a separate source/package migration workflow when source code is available.
 - `upgrade` writes to `--output-path`, or `<project>_Upgraded` when no output path is supplied.
 - The current checked source does not implement a generic Windows to Cross-platform/Portable framework update. Treat that as unsupported until verified in the target branch or implemented.
 

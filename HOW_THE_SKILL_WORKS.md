@@ -26,6 +26,7 @@ Key files:
 | `tools/uipath-upgrade-cli/` | Bundled UiPath Upgrade CLI and runtime files. |
 | `references/reporting-guidelines.md` | Defines the expected migration report structure. |
 | `references/uipath-upgrade-cli.md` | Documents CLI options, helper behavior, and execution details. |
+| `references/custom-activity-migration.md` | Explains custom activity package migration scope, steps, and limitations. |
 | `references/migration-operations-knowledge.md` | Captured migration knowledge used during normal execution. |
 
 ## Execution Flow
@@ -144,6 +145,38 @@ If the first analysis is blocked by missing packages, the helper runs a second d
 
 This second pass is only used to uncover deeper migration risks. It does not make missing dependencies safe to ignore for upgrade. Missing packages or unresolved custom libraries remain blockers until resolved.
 
+## Custom Activity Packages
+
+Custom activity packages are handled differently from built-in UiPath activity migrations.
+
+The skill can:
+
+- detect custom packages in `project.json`,
+- detect missing custom activity types or namespaces,
+- report affected workflows and risks,
+- explain whether the process is blocked by package restore or type loading,
+- guide the user to migrate, replace, or obtain a Windows-compatible package.
+
+The skill does not automatically migrate custom activity source code during the normal process migration. A custom activity package must be migrated and republished separately before the consuming process can be considered ready.
+
+When source code is available, the user should follow this sequence:
+
+1. Identify the custom package and every workflow that uses it.
+2. Obtain the custom activity source repository and confirm ownership, feed access, signing, and build prerequisites.
+3. Convert the activity project to SDK-style `.csproj`.
+4. Keep the legacy target when needed, such as `net461`, and add a Windows-compatible .NET target such as `net6.0-windows`.
+5. Move package references into the `.csproj`.
+6. Add the required UiPath .NET workflow dependencies and target-specific reference conditions.
+7. Replace or upgrade dependencies that do not support .NET.
+8. Review runtime and designer code for APIs or behaviors that are not compatible with .NET.
+9. Build and test every target framework.
+10. Create a NuGet package with the correct framework folders, such as `net461` and `net6.0-windows7.0`.
+11. Publish the migrated package to the feed used by Studio and Robot.
+12. Restore and analyze the consuming process again.
+13. Migrate the consuming process only after package restore, type loading, Studio validation, and representative runtime tests pass.
+
+If source code is not available, the practical options are to request a Windows-compatible package from the owner/vendor, replace the custom activities with supported UiPath/API/coded workflow logic, or redesign the affected workflows.
+
 ## How Package Versions Are Selected
 
 The skill does not choose arbitrary package versions on its own. Package selection is controlled by the UiPath Upgrade CLI, its migration extensions, configured package feeds, and any explicit CLI options.
@@ -195,6 +228,7 @@ Common examples:
 
 - providing custom activity package source or feed access,
 - confirming Windows-compatible versions of custom libraries,
+- migrating and republishing custom activity packages before process migration,
 - provisioning Orchestrator, GSuite, Microsoft 365, or SMTP connections,
 - validating UI selectors against the real target application,
 - confirming business behavior after migration,

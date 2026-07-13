@@ -463,10 +463,10 @@ function Get-AssessmentRisks {
             -Component (Format-Examples $customDependencies) `
             -Evidence (Format-Examples ($missingPackageFindings + $typeMissingFindings)) `
             -FailureMode "Dependency restore or type resolution can fail; converted workflows may contain unresolved activities." `
-            -Replacement "Migrate and publish Windows-compatible libraries first, or replace unavailable custom activities with supported UI Automation, API, or coded workflow implementations." `
-            -Resolution "Identify the owning library/feed, confirm NuGet or Orchestrator credentials, obtain source/package access, check whether the package has a Windows-compatible build, republish or replace it, update feeds if needed, then rerun normal analysis and the ignore-missing-dependencies pass." `
+            -Replacement "Migrate and publish Windows-compatible custom activity libraries first, or replace unavailable custom activities with supported UI Automation, API, or coded workflow implementations." `
+            -Resolution "Treat custom activity package migration as a separate source/package task. Identify the owning library/feed, obtain source when possible, migrate the activity project to SDK-style .csproj with a Windows .NET target, validate dependencies, build/pack/publish the Windows-compatible package, update feeds if needed, then rerun normal analysis and the ignore-missing-dependencies pass." `
             -Owner "Client Owner + Human + Coding Agent" `
-            -Automation "Partial: the coding agent can map namespaces to packages, update project references, and rerun validation after access is available; humans must provide package ownership, feed credentials, source access, and runtime validation." `
+            -Automation "Partial: the coding agent can map namespaces to packages, inspect and update custom activity source when provided, update project references, and rerun validation; humans must provide package ownership, feed credentials, source access, publication approval, and runtime validation." `
             -Validation "Restore succeeds; SARIF has no missing package/type findings; migrated project opens and validates in Studio."
     }
 

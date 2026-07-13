@@ -11,6 +11,7 @@ Relevant scenarios to cover in generated reports:
 - Inventory the project, dependencies, libraries, and external systems before upgrade.
 - Convert and republish Windows-Legacy libraries before processes that consume them.
 - Custom or third-party activity packages must be restored from configured feeds and must have Windows-compatible implementations.
+- Custom activity package source migration is separate from process migration. If the package source is available, migrate and republish the package first using [custom-activity-migration.md](custom-activity-migration.md).
 - If a dependency cannot be resolved, converted workflows may contain unresolved activities and must not be treated as ready.
 - Known expression issues such as ambiguous VB `{}` initializers require typed replacements such as `New Object() {}` when the target property expects an object array.
 - SOAP web services are not supported in Windows or cross-platform projects.
