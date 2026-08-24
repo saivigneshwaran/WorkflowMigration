@@ -756,6 +756,133 @@ function Build-AnalyzeArgs {
     return $args
 }
 
+function Invoke-SafeRemediations {
+    param([string]$Project)
+    $actions = [System.Collections.Generic.List[string]]::new()
+    $projectJsonPath = Join-Path $Project "project.json"
+    if (-not (Test-Path -LiteralPath $projectJsonPath -PathType Leaf)) {
+        return $actions
+    }
+
+    $projectJson = Read-JsonFile $projectJsonPath
+    if (-not $projectJson) {
+        $actions.Add("Skipped project.json remediation because it could not be parsed.")
+        return $actions
+    }
+
+    $targetFramework = $projectJson.targetFramework
+    if ($targetFramework -eq "Legacy" -or $targetFramework -eq "Windows-Legacy") {
+        $projectJson.targetFramework = "Windows"
+        ($projectJson | ConvertTo-Json -Depth 100) | Set-Content -LiteralPath $projectJsonPath -Encoding UTF8
+        $actions.Add("Updated project.json targetFramework from '$targetFramework' to 'Windows'.")
+    }
+
+    return $actions
+}
+
+function Write-RemediationReport {
+    param(
+        [string]$Path,
+        [string]$Project,
+        [Nullable[int]]$PreAnalyzeExitCode,
+        [Nullable[int]]$PostAnalyzeExitCode,
+        [string]$PreSarifPath,
+        [string]$FinalSarifPath,
+        [object]$FinalSarif,
+        [string[]]$Actions
+    )
+
+    $findings = @(Get-SarifFindings $FinalSarif)
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add("# UiPath Post-Migration Remediation Report")
+    $lines.Add("")
+    $lines.Add("- Generated UTC: $((Get-Date).ToUniversalTime().ToString("o"))")
+    $lines.Add(("- Migrated project path: ``{0}``" -f $Project))
+    $lines.Add(("- Initial post-upgrade analyze exit code: ``{0}``" -f $(if ($null -ne $PreAnalyzeExitCode) { $PreAnalyzeExitCode } else { "not run" })))
+    $lines.Add(("- Post-remediation analyze exit code: ``{0}``" -f $(if ($null -ne $PostAnalyzeExitCode) { $PostAnalyzeExitCode } else { "not run" })))
+    $lines.Add(("- Initial SARIF source: ``{0}``" -f $(if ($PreSarifPath) { $PreSarifPath } else { "not found" })))
+    $lines.Add(("- Final SARIF source: ``{0}``" -f $(if ($FinalSarifPath) { $FinalSarifPath } else { "not found" })))
+    $lines.Add("")
+    $lines.Add("## Safe Remediation Actions")
+    $lines.Add("")
+    if ($Actions.Count -gt 0) {
+        foreach ($action in $Actions) { $lines.Add("- $action") }
+    } else {
+        $lines.Add("- No deterministic safe remediation pattern matched.")
+    }
+
+    $lines.Add("")
+    $lines.Add("## Remaining Finding Counts")
+    $lines.Add("")
+    if ($findings.Count -gt 0) {
+        foreach ($level in @("error", "warning", "note", "none")) {
+            $count = @($findings | Where-Object { $_.Level -eq $level }).Count
+            $lines.Add("- ${level}: $count")
+        }
+    } else {
+        $lines.Add("- No SARIF findings were parsed.")
+    }
+
+    $lines.Add("")
+    $lines.Add("## Remaining Top Findings")
+    $lines.Add("")
+    if ($findings.Count -gt 0) {
+        foreach ($finding in ($findings | Select-Object -First 25)) {
+            $location = if ($finding.Location) { " ($($finding.Location))" } else { "" }
+            $lines.Add(("- [{0}] ``{1}``{2}: {3}" -f $finding.Level, $finding.RuleId, $location, $finding.Message))
+        }
+    } else {
+        $lines.Add("- No findings to list.")
+    }
+
+    $lines.Add("")
+    $lines.Add("## Next Step")
+    $lines.Add("")
+    $lines.Add("Resolve remaining findings manually only when no safe automatic remediation is available.")
+
+    $parent = Split-Path -Parent $Path
+    if ($parent) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    Set-Content -LiteralPath $Path -Value ($lines -join [Environment]::NewLine) -Encoding UTF8
+    return $Path
+}
+
+function Invoke-PostMigrationRemediation {
+    param(
+        [string]$CliPath,
+        [string]$OutputPath,
+        [string[]]$PassThrough
+    )
+
+    $reportPath = Join-Path $OutputPath ".upgrade\post-migration-remediation-report.md"
+    if (-not (Test-Path -LiteralPath $OutputPath)) {
+        $reportPath = Join-Path (Split-Path -Parent $OutputPath) ("$(Split-Path -Leaf $OutputPath)-post-migration-remediation-report.md")
+        $written = Write-RemediationReport -Path $reportPath -Project $OutputPath -PreAnalyzeExitCode $null -PostAnalyzeExitCode $null -PreSarifPath $null -FinalSarifPath $null -FinalSarif $null -Actions @("Skipped remediation because the migrated output path does not exist: $OutputPath")
+        Write-Host "Post-migration remediation report: $written"
+        return
+    }
+
+    $analyzeArgs = Build-AnalyzeArgs $OutputPath $PassThrough
+    $preExitCode = Invoke-UpgradeCli $CliPath $analyzeArgs "post-upgrade analysis"
+    $preSarifPath = Get-LatestSarif $OutputPath
+    $preSarif = Read-JsonFile $preSarifPath
+    $actions = @(Invoke-SafeRemediations $OutputPath)
+
+    if ($actions.Count -gt 0) {
+        $postExitCode = Invoke-UpgradeCli $CliPath $analyzeArgs "post-remediation analysis"
+        $finalSarifPath = Get-LatestSarif $OutputPath
+        $finalSarif = Read-JsonFile $finalSarifPath
+    } else {
+        $postExitCode = $preExitCode
+        $finalSarifPath = $preSarifPath
+        $finalSarif = $preSarif
+    }
+
+    $written = Write-RemediationReport -Path $reportPath -Project $OutputPath -PreAnalyzeExitCode $preExitCode -PostAnalyzeExitCode $postExitCode -PreSarifPath $preSarifPath -FinalSarifPath $finalSarifPath -FinalSarif $finalSarif -Actions $actions
+    Write-Host "Post-migration remediation report: $written"
+}
+
 function Run-ConsentGatedWorkflow {
     param([string]$CliPath)
     if (-not $ProjectPath) {
@@ -813,9 +940,8 @@ function Run-ConsentGatedWorkflow {
         }
         $upgradeExitCode = Invoke-UpgradeCli $CliPath $upgradeArgs "migration upgrade"
 
-        if (-not $SkipRemediation -and (Test-Path -LiteralPath $plannedOutput)) {
-            $postArgs = Build-AnalyzeArgs $plannedOutput $passThrough
-            [void](Invoke-UpgradeCli $CliPath $postArgs "post-upgrade analysis")
+        if (-not $SkipRemediation) {
+            Invoke-PostMigrationRemediation $CliPath $plannedOutput $passThrough
         }
         return $upgradeExitCode
     } finally {

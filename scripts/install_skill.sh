@@ -114,7 +114,12 @@ scoped_target() {
   fi
 }
 
-if [ "$agent" = "codex" ] || [ "$agent" = "agents" ] || [ "$agent" = "all" ]; then
+if [ "$agent" = "codex" ] || [ "$agent" = "all" ]; then
+  codex_home=${CODEX_HOME:-"$home_dir/.codex"}
+  add_target "$(scoped_target "$codex_home/skills" ".codex/skills")"
+fi
+
+if [ "$agent" = "agents" ] || [ "$agent" = "all" ]; then
   agents_home=${AGENTS_HOME:-"$home_dir/.agents"}
   add_target "$(scoped_target "$agents_home/skills" ".agents/skills")"
 fi

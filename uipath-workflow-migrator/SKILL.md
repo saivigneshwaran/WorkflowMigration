@@ -109,7 +109,7 @@ python3 "$SKILL_DIR/scripts/run_uipath_upgrade_cli.py" \
   --verbose
 ```
 
-After an approved upgrade, re-analyze the output project and continue with agent-driven fixes for remaining report findings instead of only suggesting next steps. The Python helper also applies deterministic safe remediations and writes `.upgrade/post-migration-remediation-report.md`; the PowerShell helper provides the no-Python Windows path and performs the post-upgrade analysis pass. Ask before touching the original source project or changing business logic.
+After an approved upgrade, re-analyze the output project and continue with agent-driven fixes for remaining report findings instead of only suggesting next steps. Both helpers apply deterministic safe remediations and write `.upgrade/post-migration-remediation-report.md`. Ask before touching the original source project or changing business logic.
 
 Migration analysis reports must be assessment-oriented and consistent across runs. The top of the report should summarize readiness, validation evidence, package-version/Studio compatibility, blockers, risk register, ownership, automation eligibility, remediation steps, validation expectations, automated changes, and final recommendation. Raw analyzer output and the migration gate section are excluded from the Markdown report unless the user explicitly asks for them.
 
@@ -128,7 +128,7 @@ Custom activity package migration is a separate task from process migration. The
 For Classic to Modern activity conversion, keep extensions enabled. To be explicit, pass:
 
 ```bash
---enabled-extensions UiAutomationActivities,MailActivities,MicrosoftActivitiesExtension
+--enabled-extensions UIAutomationActivities,MailActivities,MicrosoftActivitiesExtensions,MicrosoftOffice365Activities,GSuiteActivities
 ```
 
 For a repo/folder with multiple projects:
@@ -146,7 +146,7 @@ For direct CLI access, pass raw `UiPath.Upgrade.exe` arguments after `--`.
 The checked source has these behaviors:
 
 - Legacy/Windows-Legacy to Windows is implemented by `ProjectFrameworkUpdaterStep`.
-- Classic activity migrations are extension-driven; the built-in extension names are `UiAutomationActivities`, `MailActivities`, and `MicrosoftActivitiesExtension`.
+- Classic activity migrations are extension-driven; the built-in extension names are `UIAutomationActivities`, `MailActivities`, `MicrosoftActivitiesExtensions`, `MicrosoftOffice365Activities`, and `GSuiteActivities`.
 - Custom activity package source migration is not implemented by the bundled process migration CLI. Treat custom package migration as a separate source/package migration workflow when source code is available.
 - `upgrade` writes to `--output-path`, or `<project>_Upgraded` when no output path is supplied.
 - The current checked source does not implement a generic Windows to Cross-platform/Portable framework update. Treat that as unsupported until verified in the target branch or implemented.

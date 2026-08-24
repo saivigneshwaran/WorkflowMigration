@@ -67,13 +67,15 @@ PowerShell helper options use PowerShell casing, for example `-ConsentGated`, `-
 
 ## Built-In Extensions
 
-The checked source includes these extension names:
+The bundled `Extensions/` folder includes these extension names (verified against the shipped assemblies, each named `UiPath.Upgrade.<ExtensionDirectoryName>.dll`):
 
-- `UiAutomationActivities`: registers UI Automation package upgrade and activity migration steps.
+- `UIAutomationActivities`: registers UI Automation package upgrade and activity migration steps.
 - `MailActivities`: migrates supported Outlook/Mail activities toward Microsoft 365 activities and reporting.
-- `MicrosoftActivitiesExtension`: removes/replaces Microsoft activities package usage and namespaces.
+- `MicrosoftActivitiesExtensions`: removes/replaces Microsoft activities package usage and namespaces.
+- `MicrosoftOffice365Activities`: supports Microsoft 365 productivity activity migration.
+- `GSuiteActivities`: supports GSuite productivity activity migration.
 
-Extensions are discovered from subdirectories under `Extensions`. Each extension directory must contain a matching main assembly named `UiPath.Upgrade.<ExtensionDirectoryName>.dll`.
+Extensions are discovered from subdirectories under `Extensions`. Each extension directory must contain a matching main assembly named `UiPath.Upgrade.<ExtensionDirectoryName>.dll`. Extension names are case-sensitive when passed to `--enabled-extensions`/`--disabled-extensions`; match the folder name exactly.
 
 ## Pipeline
 

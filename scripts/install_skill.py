@@ -17,6 +17,13 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def codex_skills_dir() -> Path:
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        return Path(codex_home).expanduser() / "skills"
+    return Path.home() / ".codex" / "skills"
+
+
 def agents_skills_dir() -> Path:
     agents_home = os.environ.get("AGENTS_HOME")
     if agents_home:
@@ -31,7 +38,9 @@ def scoped_dir(scope: str, global_path: Path, local_path: Path) -> Path:
 def resolve_agent_targets(agent: str, scope: str, explicit_targets: list[str]) -> list[Path]:
     targets: list[Path] = []
 
-    if agent in ("codex", "agents", "all"):
+    if agent in ("codex", "all"):
+        targets.append(scoped_dir(scope, codex_skills_dir(), Path(".codex") / "skills"))
+    if agent in ("agents", "all"):
         targets.append(scoped_dir(scope, agents_skills_dir(), Path(".agents") / "skills"))
     if agent in ("cursor", "all"):
         targets.append(scoped_dir(scope, Path.home() / ".cursor" / "skills", Path(".cursor") / "skills"))

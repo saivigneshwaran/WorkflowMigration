@@ -6,7 +6,8 @@ This repository contains one self-contained AI coding-agent skill for UiPath wor
 
 - Primary skill folder: `uipath-workflow-migrator/`
 - UiPath-style discovery alias: `skills/uipath-workflow-migrator`
-- Codex-style discovery alias: `.agents/skills`
+- Codex discovery alias: `.codex/skills` (installed with `--agent codex`)
+- Generic multi-agent discovery alias: `.agents/skills` (installed with `--agent agents`)
 
 When a user asks to analyze or migrate UiPath Studio projects, read `uipath-workflow-migrator/SKILL.md` before acting. The skill owns the migration workflow, bundled helper script, references, and bundled UiPath Upgrade CLI.
 
@@ -19,3 +20,4 @@ Use `./scripts/install_skill.sh --agent all --mode copy` on macOS/Linux, or `pow
 - Use `references/migration-operations-knowledge.md` during migration work instead of querying external knowledge sources during normal execution.
 - Do not write to the original source project during migration unless the user explicitly approves that change.
 - Run actual `UiPath.Upgrade.Cli` operations on Windows with the required .NET runtime and package/feed access.
+- This file is the canonical agent-instructions source. `CLAUDE.md` and `GEMINI.md` are thin pointers to it so all three stay in sync; edit only this file.

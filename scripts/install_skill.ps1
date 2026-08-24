@@ -61,9 +61,19 @@ function Get-AgentTargets {
     $homeDir = Get-HomePath
     $targets = [System.Collections.Generic.List[string]]::new()
 
-    if ($Agent -eq "codex" -or $Agent -eq "agents" -or $Agent -eq "all") {
+    if ($Agent -eq "codex" -or $Agent -eq "all") {
+        $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $homeDir ".codex" }
         if ($Scope -eq "global") {
-            Add-Target $targets (Join-Path $homeDir ".agents/skills")
+            Add-Target $targets (Join-Path $codexHome "skills")
+        } else {
+            Add-Target $targets ".codex/skills"
+        }
+    }
+
+    if ($Agent -eq "agents" -or $Agent -eq "all") {
+        $agentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $homeDir ".agents" }
+        if ($Scope -eq "global") {
+            Add-Target $targets (Join-Path $agentsHome "skills")
         } else {
             Add-Target $targets ".agents/skills"
         }
