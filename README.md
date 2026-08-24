@@ -16,7 +16,15 @@ Before installing the skill, make sure the Windows machine has:
 
 ## How to Install the Skill
 
-1. Clone the repository on the Windows machine.
+1. Get the repository onto the Windows machine. `scripts/sync_repo.ps1` checks the target directory first: if the bundled Upgrade CLI is already there it fetches only the update (`git pull --ff-only`) instead of downloading the entire repository again; otherwise it does a full `git clone`. On the very first run (nothing local yet), download the script once and run it:
+
+```powershell
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/saivigneshwaran/WorkflowMigration/main/scripts/sync_repo.ps1 -OutFile sync_repo.ps1
+.\sync_repo.ps1
+cd WorkflowMigration
+```
+
+From then on, rerun the copy of the script inside the checkout (`.\WorkflowMigration\scripts\sync_repo.ps1`) to update in place — it will detect the existing Upgrade CLI and pull only the changes. Plain `git clone` still works if you prefer to manage the checkout yourself:
 
 ```powershell
 git clone https://github.com/saivigneshwaran/WorkflowMigration.git
@@ -45,13 +53,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent none
 
 ## How to Update the Skill
 
-If the skill was installed with `-Mode copy`, update the repository checkout and reinstall with `-Force`.
+If the skill was installed with `-Mode copy`, update the repository checkout and reinstall with `-Force`. `sync_repo.ps1` detects the existing Upgrade CLI and fetches only the update rather than re-cloning the repository.
 
 ```powershell
-cd C:\Path\To\WorkflowMigration
-git pull --ff-only origin main
+powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\sync_repo.ps1 -Target C:\Path\To\WorkflowMigration
 
-powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent all -Mode copy -Force
+powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\install_skill.ps1 -Agent all -Mode copy -Force
 ```
 
 If the skill was installed for only one agent, use the same agent name that was used during installation.
@@ -69,8 +76,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent none
 If the skill was installed with `-Mode symlink`, update the repository checkout and restart the coding-agent session.
 
 ```powershell
-cd C:\Path\To\WorkflowMigration
-git pull --ff-only origin main
+powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\sync_repo.ps1 -Target C:\Path\To\WorkflowMigration
 ```
 
 After updating, start a new coding-agent session so the agent can reload the latest skill files.
