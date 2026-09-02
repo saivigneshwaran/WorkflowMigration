@@ -19,5 +19,5 @@
     "windows-legacy",
     "classic-activities"
   ],
-  "skills": "./skills/"
+  "skills": "./uipath-workflow-migrator/"
 }

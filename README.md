@@ -31,13 +31,13 @@ git clone https://github.com/saivigneshwaran/WorkflowMigration.git
 cd WorkflowMigration
 ```
 
-2. Install the skill into the supported skill locations for the coding agents on that machine.
+2. Install the skill into the supported skill locations for the coding agents on that machine. This step covers Codex, Cursor, Copilot, Gemini, OpenCode, Autopilot, and any generic agent that reads from `~/.agents/skills`. **Claude Code installs differently — see the [Claude Code](#claude-code) section below.**
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent all -Mode copy
 ```
 
-3. To install for only one agent, replace `all` with the target agent name.
+3. To install for only one agent, replace `all` with the target agent name (`codex`, `cursor`, `copilot`, `gemini`, `opencode`, `autopilot`, or `agents`).
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent codex -Mode copy
@@ -50,6 +50,30 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent none
 ```
 
 5. Start a new coding-agent session so the agent can discover the installed skill.
+
+### Claude Code
+
+Claude Code discovers this skill through its own plugin/marketplace mechanism instead of `install_skill.ps1`. From inside the cloned repository:
+
+```powershell
+claude plugin marketplace add "https://github.com/saivigneshwaran/WorkflowMigration"
+claude plugin install "uipath-workflow-migrator@workflow-migration-marketplace"
+```
+
+If you already have a local clone and prefer to install straight from it instead of from GitHub, point `marketplace add` at the local folder:
+
+```powershell
+claude plugin marketplace add "C:\Path\To\WorkflowMigration"
+claude plugin install "uipath-workflow-migrator@workflow-migration-marketplace"
+```
+
+Restart the Claude Code session afterward — plugins are loaded at session start, so a session already running when you install won't see the skill until it's restarted. Verify the skill loaded with:
+
+```powershell
+claude plugin details "uipath-workflow-migrator@workflow-migration-marketplace"
+```
+
+which should report `Skills (1)  uipath-workflow-migrator`.
 
 ## How to Update the Skill
 
@@ -81,12 +105,35 @@ powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\sy
 
 After updating, start a new coding-agent session so the agent can reload the latest skill files.
 
+### Claude Code
+
+If the marketplace was added from a local clone, updating that clone is enough — Claude Code reads the plugin straight from the folder, so just refresh it and restart the session:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\sync_repo.ps1 -Target C:\Path\To\WorkflowMigration
+```
+
+If the marketplace was added from the GitHub URL instead, refresh the marketplace and update the plugin explicitly:
+
+```powershell
+claude plugin marketplace update workflow-migration-marketplace
+claude plugin update "uipath-workflow-migrator@workflow-migration-marketplace"
+```
+
+Restart the Claude Code session afterward to apply the update.
+
 ## Prompt Example
 
-Use the skill from a coding-agent session on Windows:
+Use the skill from a coding-agent session on Windows. Most agents pick it up from a natural-language mention:
 
 ```text
 $uipath-workflow-migrator Convert project located in 'C:\Path\To\UiPathProject' to Windows
+```
+
+In Claude Code, invoke it as a slash command instead:
+
+```text
+/uipath-workflow-migrator Convert project located in 'C:\Path\To\UiPathProject' to Windows
 ```
 
 The skill analyzes the project first, generates a migration report, and asks for approval before running the upgrade.
