@@ -14,113 +14,74 @@ Before installing the skill, make sure the Windows machine has:
 - The complete `uipath-workflow-migrator` folder, including `SKILL.md`, `references`, `scripts`, and `tools`.
 - Windows PowerShell. Python is optional because the skill includes both PowerShell and Python helper paths.
 
-## How to Install the Skill
+## Installing the Skill
 
-1. Get the repository onto the Windows machine. `scripts/sync_repo.ps1` checks the target directory first: if the bundled Upgrade CLI is already there it fetches only the update (`git pull --ff-only`) instead of downloading the entire repository again; otherwise it does a full `git clone`. On the very first run (nothing local yet), download the script once and run it:
-
-```powershell
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/saivigneshwaran/WorkflowMigration/main/scripts/sync_repo.ps1 -OutFile sync_repo.ps1
-.\sync_repo.ps1
-cd WorkflowMigration
-```
-
-From then on, rerun the copy of the script inside the checkout (`.\WorkflowMigration\scripts\sync_repo.ps1`) to update in place — it will detect the existing Upgrade CLI and pull only the changes. Plain `git clone` still works if you prefer to manage the checkout yourself:
-
-```powershell
-git clone https://github.com/saivigneshwaran/WorkflowMigration.git
-cd WorkflowMigration
-```
-
-2. Install the skill into the supported skill locations for the coding agents on that machine. This step covers Codex, Cursor, Copilot, Gemini, OpenCode, Autopilot, and any generic agent that reads from `~/.agents/skills`. **Claude Code installs differently — see the [Claude Code](#claude-code) section below.**
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent all -Mode copy
-```
-
-3. To install for only one agent, replace `all` with the target agent name (`codex`, `cursor`, `copilot`, `gemini`, `opencode`, `autopilot`, or `agents`).
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent codex -Mode copy
-```
-
-4. To install into a custom skills directory, provide the target directory.
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent none -Target C:\Path\To\Skills -Mode copy
-```
-
-5. Start a new coding-agent session so the agent can discover the installed skill.
+Find the section below for your coding agent and follow its steps in order. Every path installs from the same repository; only the last step or two differ.
 
 ### Claude Code
 
-Claude Code discovers this skill through its own plugin/marketplace mechanism instead of `install_skill.ps1`. From inside the cloned repository:
+1. Add this repository as a plugin marketplace:
+   ```powershell
+   claude plugin marketplace add "https://github.com/saivigneshwaran/WorkflowMigration"
+   ```
+2. Install the plugin from it:
+   ```powershell
+   claude plugin install "uipath-workflow-migrator@workflow-migration-marketplace"
+   ```
+3. Restart the Claude Code session (plugins load at startup, so a running session won't see it yet).
+4. Confirm it loaded:
+   ```powershell
+   claude plugin details "uipath-workflow-migrator@workflow-migration-marketplace"
+   ```
+   It should report `Skills (1)  uipath-workflow-migrator`.
 
-```powershell
-claude plugin marketplace add "https://github.com/saivigneshwaran/WorkflowMigration"
-claude plugin install "uipath-workflow-migrator@workflow-migration-marketplace"
-```
+> Installing from a local clone instead of GitHub works the same way — in step 1, use the clone's folder path instead of the URL, e.g. `claude plugin marketplace add "C:\Path\To\WorkflowMigration"`.
 
-If you already have a local clone and prefer to install straight from it instead of from GitHub, point `marketplace add` at the local folder:
+### Codex, Cursor, Copilot, Gemini, OpenCode, or Autopilot
 
-```powershell
-claude plugin marketplace add "C:\Path\To\WorkflowMigration"
-claude plugin install "uipath-workflow-migrator@workflow-migration-marketplace"
-```
+1. Clone the repository:
+   ```powershell
+   git clone https://github.com/saivigneshwaran/WorkflowMigration.git
+   cd WorkflowMigration
+   ```
+2. Install the skill for your agent. Replace `codex` with `cursor`, `copilot`, `gemini`, `opencode`, or `autopilot` to match the agent you use:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent codex -Mode copy
+   ```
+3. Restart your coding-agent session so it discovers the installed skill.
 
-Restart the Claude Code session afterward — plugins are loaded at session start, so a session already running when you install won't see the skill until it's restarted. Verify the skill loaded with:
+> To install for every agent above in one go instead of just one, use `-Agent all` in step 2.
 
-```powershell
-claude plugin details "uipath-workflow-migrator@workflow-migration-marketplace"
-```
+## Updating the Skill
 
-which should report `Skills (1)  uipath-workflow-migrator`.
-
-## How to Update the Skill
-
-If the skill was installed with `-Mode copy`, update the repository checkout and reinstall with `-Force`. `sync_repo.ps1` detects the existing Upgrade CLI and fetches only the update rather than re-cloning the repository.
-
-```powershell
-powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\sync_repo.ps1 -Target C:\Path\To\WorkflowMigration
-
-powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\install_skill.ps1 -Agent all -Mode copy -Force
-```
-
-If the skill was installed for only one agent, use the same agent name that was used during installation.
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent codex -Mode copy -Force
-```
-
-If the skill was installed into a custom skills directory, provide the same target directory again.
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1 -Agent none -Target C:\Path\To\Skills -Mode copy -Force
-```
-
-If the skill was installed with `-Mode symlink`, update the repository checkout and restart the coding-agent session.
-
-```powershell
-powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\sync_repo.ps1 -Target C:\Path\To\WorkflowMigration
-```
-
-After updating, start a new coding-agent session so the agent can reload the latest skill files.
+Same idea as installing: refresh the repository first, then repeat the install step you used, with a couple of small differences noted below.
 
 ### Claude Code
 
-If the marketplace was added from a local clone, updating that clone is enough — Claude Code reads the plugin straight from the folder, so just refresh it and restart the session:
+1. If you installed from a **local clone**, refresh it:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\sync_repo.ps1 -Target C:\Path\To\WorkflowMigration
+   ```
+   Claude Code reads the plugin straight from that folder, so this alone is enough — skip to step 3.
+2. If you installed from the **GitHub URL** instead, update the marketplace and the plugin:
+   ```powershell
+   claude plugin marketplace update workflow-migration-marketplace
+   claude plugin update "uipath-workflow-migrator@workflow-migration-marketplace"
+   ```
+3. Restart the Claude Code session.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\sync_repo.ps1 -Target C:\Path\To\WorkflowMigration
-```
+### Codex, Cursor, Copilot, Gemini, OpenCode, or Autopilot
 
-If the marketplace was added from the GitHub URL instead, refresh the marketplace and update the plugin explicitly:
-
-```powershell
-claude plugin marketplace update workflow-migration-marketplace
-claude plugin update "uipath-workflow-migrator@workflow-migration-marketplace"
-```
-
-Restart the Claude Code session afterward to apply the update.
+1. Refresh the repository:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\sync_repo.ps1 -Target C:\Path\To\WorkflowMigration
+   ```
+2. If you installed with `-Mode copy`, reinstall with the same `-Agent` value you used originally, plus `-Force`:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File C:\Path\To\WorkflowMigration\scripts\install_skill.ps1 -Agent codex -Mode copy -Force
+   ```
+   If you installed with `-Mode symlink`, skip this step — step 1 already updated the skill in place.
+3. Restart your coding-agent session.
 
 ## Prompt Example
 
